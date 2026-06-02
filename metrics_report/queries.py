@@ -50,17 +50,27 @@ def build_system_queries(selector: str = "", window: str = "24h") -> list[Query]
             unit="%",
             per_server=True,
         ),
-        # Gauge: one series per instance already — no outer avg needed
+        # Gauge: (Total - Free - Cached - Buffers) / Total — matches Grafana dashboard formula
         Query(
             name="memory_usage_pct",
-            promql=f"(1 - avg_over_time(node_memory_MemAvailable_bytes{w}[{window}]) / avg_over_time(node_memory_MemTotal_bytes{w}[{window}])) * 100",
+            promql=(
+                f"(avg_over_time(node_memory_MemTotal_bytes{w}[{window}])"
+                f" - avg_over_time(node_memory_MemFree_bytes{w}[{window}])"
+                f" - (avg_over_time(node_memory_Cached_bytes{w}[{window}])"
+                f" + avg_over_time(node_memory_Buffers_bytes{w}[{window}])))"
+                f" / avg_over_time(node_memory_MemTotal_bytes{w}[{window}]) * 100"
+            ),
             unit="%",
             per_server=True,
         ),
-        # Gauge: one series per (instance, mountpoint)
+        # Gauge: (size - free) / size — device!~rootfs excludes overlay/tmpfs duplicates
         Query(
             name="disk_usage_pct",
-            promql=f'(1 - avg_over_time(node_filesystem_avail_bytes{{mountpoint="/"{a}}}[{window}]) / avg_over_time(node_filesystem_size_bytes{{mountpoint="/"{a}}}[{window}])) * 100',
+            promql=(
+                f'(avg_over_time(node_filesystem_size_bytes{{mountpoint="/", device!~"rootfs"{a}}}[{window}])'
+                f' - avg_over_time(node_filesystem_free_bytes{{mountpoint="/", device!~"rootfs"{a}}}[{window}]))'
+                f' / avg_over_time(node_filesystem_size_bytes{{mountpoint="/", device!~"rootfs"{a}}}[{window}]) * 100'
+            ),
             unit="%",
             per_server=True,
         ),
