@@ -41,7 +41,6 @@ class VMClient:
             return None
 
         if result_type == "scalar":
-            # scalar: [timestamp, "value"]
             return float(data["data"]["result"][1])
 
         if result_type in ("vector", "matrix"):
@@ -50,3 +49,27 @@ class VMClient:
             return float(value_field[1])
 
         return None
+
+    async def query_vector(self, promql: str, id_label: str = "name") -> list[tuple[str, float]]:
+        """Execute a PromQL query and return [(server_id, value), ...] for every result series.
+
+        Uses id_label (default: "name") as the server identifier, falling back to "instance".
+        """
+        assert self._client is not None, "VMClient must be used as async context manager"
+        resp = await self._client.get(_QUERY_PATH, params={"query": promql})
+        resp.raise_for_status()
+        data = resp.json()
+
+        results = data.get("data", {}).get("result", [])
+        if not results:
+            log.debug("No per-server results for query: %s", promql)
+            return []
+
+        out: list[tuple[str, float]] = []
+        for r in results:
+            labels = r.get("metric", {})
+            server = labels.get(id_label) or labels.get("instance", "unknown")
+            value = float(r["value"][1])
+            out.append((server, value))
+
+        return sorted(out)

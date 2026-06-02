@@ -1,16 +1,13 @@
 """
 L0 PromQL query builders.
 
-Queries are built at call-time with a configurable time window and an optional
-label selector so the same query set can be scoped to any service.
+System health queries (per_server=True) return one value per matched instance
+via query_vector(). API queries (per_server=False) return a single aggregated
+value via query().
 
-  selector = 'name=~"p-uaa-entity-manager.*", job="system_metrics"'
-  queries  = build_system_queries(selector, window="24h")
-
-Metric types and their window handling:
-  - Counters  (cpu, http_requests, latency buckets) → rate(...[window])
-  - Gauges    (memory, disk)                        → avg_over_time(...[window])
-  - Instant   (servers up/down)                     → no window — current state
+  selector = 'name=~"p-uaa-em-.*|p-uaa-entity-manager.*", job="system_metrics"'
+  sys_queries = build_system_queries(selector, window="24h")
+  api_queries = build_api_queries(selector, window="24h")
 """
 from dataclasses import dataclass
 
@@ -19,7 +16,8 @@ from dataclasses import dataclass
 class Query:
     name: str
     promql: str
-    unit: str   # "%", "rps", "ms", "count"
+    unit: str           # "%", "rps", "ms", "count"
+    per_server: bool = False
 
 
 # ── Label-injection helpers ────────────────────────────────────────────────────
@@ -34,51 +32,55 @@ def _app(sel: str) -> str:
     return f", {sel}" if sel else ""
 
 
-# ── System Health ──────────────────────────────────────────────────────────────
+# ── System Health — per_server=True, one result row per instance ───────────────
 
 def build_system_queries(selector: str = "", window: str = "24h") -> list[Query]:
     w = _wrap(selector)
     a = _app(selector)
     return [
-        # Counter — rate() over window gives average CPU usage across the period
+        # Counter: avg across CPUs on the same instance, keep one row per (instance, name)
         Query(
             name="cpu_usage_pct",
-            promql=f'100 - avg(rate(node_cpu_seconds_total{{mode="idle"{a}}}[{window}])) * 100',
+            promql=f'100 - avg by (instance, name) (rate(node_cpu_seconds_total{{mode="idle"{a}}}[{window}])) * 100',
             unit="%",
+            per_server=True,
         ),
-        # Gauge — avg_over_time() averages the gauge value across the period
+        # Gauge: one series per instance already — no outer avg needed
         Query(
             name="memory_usage_pct",
-            promql=f"(1 - avg(avg_over_time(node_memory_MemAvailable_bytes{w}[{window}]) / avg_over_time(node_memory_MemTotal_bytes{w}[{window}]))) * 100",
+            promql=f"(1 - avg_over_time(node_memory_MemAvailable_bytes{w}[{window}]) / avg_over_time(node_memory_MemTotal_bytes{w}[{window}])) * 100",
             unit="%",
+            per_server=True,
         ),
-        # Gauge — avg_over_time() for disk
+        # Gauge: one series per (instance, mountpoint)
         Query(
             name="disk_usage_pct",
-            promql=f'(1 - avg(avg_over_time(node_filesystem_avail_bytes{{mountpoint="/"{a}}}[{window}]) / avg_over_time(node_filesystem_size_bytes{{mountpoint="/"{a}}}[{window}]))) * 100',
+            promql=f'(1 - avg_over_time(node_filesystem_avail_bytes{{mountpoint="/"{a}}}[{window}]) / avg_over_time(node_filesystem_size_bytes{{mountpoint="/"{a}}}[{window}])) * 100',
             unit="%",
+            per_server=True,
         ),
-        # Instant — current server state, not an average
+        # Instant aggregate — total count of up/down servers
         Query(
             name="servers_up",
             promql=f"count(up{w} == 1)",
             unit="count",
+            per_server=False,
         ),
         Query(
             name="servers_down",
             promql=f"count(up{w} == 0) or vector(0)",
             unit="count",
+            per_server=False,
         ),
     ]
 
 
-# ── API Metrics ────────────────────────────────────────────────────────────────
+# ── API Metrics — aggregated across all instances ──────────────────────────────
 
 def build_api_queries(selector: str = "", window: str = "24h") -> list[Query]:
     w = _wrap(selector)
     a = _app(selector)
     return [
-        # All API metrics are counters — rate() over window
         Query(
             name="api_throughput_rps",
             promql=f"sum(rate(http_requests_total{w}[{window}]))",
