@@ -63,6 +63,8 @@ class ServiceDef:
     api_name_patterns: list[str] = field(default_factory=list)      # overrides name_patterns for API queries
     api_exclude_endpoints: list[str] = field(default_factory=list) # endpoints to exclude from per-endpoint section
     api_method: Optional[str] = None                               # method filter for per-endpoint queries
+    api_request_metric: str = "django_request_count"               # override for services using a different counter metric
+    api_response_metric: str = "django_http_responses_total_by_status"  # override for services using a different response metric
 
     def _name_selector(self, patterns: Optional[list[str]] = None) -> Optional[str]:
         p = patterns if patterns is not None else self.name_patterns

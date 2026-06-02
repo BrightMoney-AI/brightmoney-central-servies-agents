@@ -100,6 +100,8 @@ def build_api_queries(
     exclude_endpoints: Optional[list[str]] = None,
     method: Optional[str] = None,
     window: str = "24h",
+    api_request_metric: str = "django_request_count",
+    api_response_metric: str = "django_http_responses_total_by_status",
 ) -> list[Query]:
     base: list[str] = []
     if selector:
@@ -127,22 +129,22 @@ def build_api_queries(
     return [
         Query(
             name="api_throughput_rps",
-            promql=f"sum(rate(django_request_count{s_base}[{window}]))",
+            promql=f"sum(rate({api_request_metric}{s_base}[{window}]))",
             unit="rps",
         ),
         Query(
             name="api_success_rate_pct",
             promql=(
-                f"sum(rate(django_http_responses_total_by_status{s_success}[{window}]))"
-                f" / sum(rate(django_http_responses_total_by_status{s_base}[{window}])) * 100"
+                f"sum(rate({api_response_metric}{s_success}[{window}]))"
+                f" / sum(rate({api_response_metric}{s_base}[{window}])) * 100"
             ),
             unit="%",
         ),
         Query(
             name="api_error_rate_pct",
             promql=(
-                f"sum(rate(django_http_responses_total_by_status{s_error}[{window}]))"
-                f" / sum(rate(django_http_responses_total_by_status{s_base}[{window}])) * 100"
+                f"sum(rate({api_response_metric}{s_error}[{window}]))"
+                f" / sum(rate({api_response_metric}{s_base}[{window}])) * 100"
             ),
             unit="%",
         ),
@@ -169,6 +171,8 @@ def build_per_endpoint_queries(
     exclude_endpoints: Optional[list[str]] = None,
     method: Optional[str] = None,
     window: str = "24h",
+    api_request_metric: str = "django_request_count",
+    api_response_metric: str = "django_http_responses_total_by_status",
 ) -> list[Query]:
     base: list[str] = []
     if selector:
@@ -197,22 +201,22 @@ def build_per_endpoint_queries(
     return [
         Query(
             name="endpoint_hits",
-            promql=f"sum(increase(django_request_count{s_base}[{window}])) by (endpoint)",
+            promql=f"sum(increase({api_request_metric}{s_base}[{window}])) by (endpoint)",
             unit="count",
             per_server=True,
         ),
         Query(
             name="endpoint_success_pct",
             promql=(
-                f"sum(rate(django_http_responses_total_by_status{s_success}[{window}])) by (endpoint)"
-                f" / sum(rate(django_http_responses_total_by_status{s_base}[{window}])) by (endpoint) * 100"
+                f"sum(rate({api_response_metric}{s_success}[{window}])) by (endpoint)"
+                f" / sum(rate({api_response_metric}{s_base}[{window}])) by (endpoint) * 100"
             ),
             unit="%",
             per_server=True,
         ),
         Query(
             name="endpoint_error_count",
-            promql=f"sum(increase(django_http_responses_total_by_status{s_error}[{window}])) by (endpoint)",
+            promql=f"sum(increase({api_response_metric}{s_error}[{window}])) by (endpoint)",
             unit="count",
             per_server=True,
         ),

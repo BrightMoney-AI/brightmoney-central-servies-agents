@@ -60,10 +60,19 @@ async def collect(
             )
             values[query.name] = result
 
-    api_method   = service.api_method if service else None
-    api_excludes = service.api_exclude_endpoints if service else []
+    api_method          = service.api_method          if service else None
+    api_excludes        = service.api_exclude_endpoints if service else []
+    api_request_metric  = service.api_request_metric   if service else "django_request_count"
+    api_response_metric = service.api_response_metric  if service else "django_http_responses_total_by_status"
 
-    for query in build_api_queries(api_sel, exclude_endpoints=api_excludes or None, method=api_method, window=window):
+    for query in build_api_queries(
+        api_sel,
+        exclude_endpoints=api_excludes or None,
+        method=api_method,
+        window=window,
+        api_request_metric=api_request_metric,
+        api_response_metric=api_response_metric,
+    ):
         log.info("Collecting [%s]: %s", service.display_name if service else "all", query.name)
         result = await gateway.fetch(
             name=query.name,
@@ -78,6 +87,8 @@ async def collect(
             exclude_endpoints=service.api_exclude_endpoints if service.api_exclude_endpoints else None,
             method=service.api_method,
             window=window,
+            api_request_metric=api_request_metric,
+            api_response_metric=api_response_metric,
         )
         for query in ep_queries:
             log.info("Collecting [%s] per-endpoint: %s", service.display_name, query.name)
