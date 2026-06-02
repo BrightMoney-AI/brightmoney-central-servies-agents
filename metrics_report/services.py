@@ -2,7 +2,11 @@
 ServiceDef — describes a service to report on, including the PromQL label selectors
 used to scope system-health and API queries to that service.
 
-services.json format (project root):
+Configuration (project root):
+  services.json — general / non-EMS services (e.g. UAA Entity Manager)
+  ems.json      — Grafana EMS collective dashboard; row sections become services
+
+services.json format:
 [
   {
     "display_name": "UAA Entity Manager",
@@ -28,11 +32,26 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 log = logging.getLogger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_NAME_PATTERN_RE = re.compile(r'name=~"([^"]+)"')
+
+_DISPLAY_NAME_OVERRIDES: dict[str, str] = {
+    "Firestore System Metrics": "Firestore",
+    "Narada System Metrics": "Narada",
+    "Mixpanel System Metrics": "Narada Mixpanel",
+    "Email Management Service System Metrics": "Email Management Service",
+    "singular forwader": "Singular Forwarder",
+    "Facebook Forwader": "Facebook Forwarder",
+    "Snap Forwader": "Snap Forwarder",
+    "Google Forwader": "Google Forwarder",
+}
 
 
 @dataclass
@@ -74,15 +93,175 @@ class ServiceDef:
         return ", ".join(parts)
 
 
-_ALL_SERVICES = ServiceDef(display_name="All Services")
+DEFAULT_SERVICES: list[ServiceDef] = [
+    ServiceDef(
+        display_name="Superset",
+        name_patterns=["p-superset-server-01"],
+        system_job="system_metrics",
+    ),
+    ServiceDef(
+        display_name="Firestore",
+        name_patterns=["p-firestore-app-.*", "p-firestore-celery-server-.*"],
+        system_job="system_metrics",
+    ),
+    ServiceDef(
+        display_name="Narada",
+        name_patterns=["p-narada-app-.*", "p-narada-worker-.*"],
+        system_job="system_metrics",
+    ),
+    ServiceDef(
+        display_name="Narada Mixpanel",
+        name_patterns=["p-narada-mixpanel-.*"],
+        system_job="system_metrics",
+    ),
+    ServiceDef(
+        display_name="Email Management Service",
+        name_patterns=["p-email-management.*"],
+        system_job="system_metrics",
+    ),
+    ServiceDef(
+        display_name="WMS",
+        name_patterns=["p-wms-app.*"],
+        system_job="system_metrics",
+    ),
+    ServiceDef(
+        display_name="Email Forwarder",
+        name_patterns=["p-narada-email-forwarder-server.*"],
+        system_job="system_metrics",
+    ),
+    ServiceDef(
+        display_name="Clevertap Forwarder",
+        name_patterns=["p-narada-clevertap-app-.*", "p-narada-clevertap-worker-.*"],
+        system_job="system_metrics",
+    ),
+    ServiceDef(
+        display_name="Physical Mail Service",
+        name_patterns=["p-physical-mail-automation.*"],
+        system_job="system_metrics",
+    ),
+    ServiceDef(
+        display_name="Singular Forwarder",
+        name_patterns=["p-narada-singular-worker.*"],
+        system_job="system_metrics",
+    ),
+    ServiceDef(
+        display_name="Facebook Forwarder",
+        name_patterns=["p-narada-facebook-worker.*"],
+        system_job="system_metrics",
+    ),
+    ServiceDef(
+        display_name="Snap Forwarder",
+        name_patterns=["p-narada-snap-worker.*"],
+        system_job="system_metrics",
+    ),
+    ServiceDef(
+        display_name="Google Forwarder",
+        name_patterns=["p-google-s2s-server.*"],
+        system_job="system_metrics",
+    ),
+    ServiceDef(
+        display_name="Webhook Gateway",
+        name_patterns=["px-bwg-.*"],
+        system_job="system_metrics",
+    ),
+]
 
 
-def load_services(path: str = "services.json") -> list[ServiceDef]:
-    p = Path(path)
-    if not p.exists():
-        log.info("No services.json found — reporting on all services without label filter.")
-        return [_ALL_SERVICES]
-    data = json.loads(p.read_text())
-    services = [ServiceDef(**entry) for entry in data]
-    log.info("Loaded %d service(s) from %s", len(services), path)
+def _normalize_display_name(row_title: str) -> str:
+    if row_title in _DISPLAY_NAME_OVERRIDES:
+        return _DISPLAY_NAME_OVERRIDES[row_title]
+    return row_title.removesuffix(" System Metrics").strip()
+
+
+def _unique_patterns(patterns: list[str]) -> list[str]:
+    return list(dict.fromkeys(patterns))
+
+
+def parse_ems_dashboard(path: Path) -> list[ServiceDef]:
+    """Extract one ServiceDef per row section from a Grafana dashboard export."""
+    data = json.loads(path.read_text())
+    panels = data.get("panels", [])
+    services: list[ServiceDef] = []
+    i = 0
+    while i < len(panels):
+        panel = panels[i]
+        if panel.get("type") != "row":
+            i += 1
+            continue
+
+        row_title = panel.get("title", "").strip()
+        if not row_title:
+            i += 1
+            continue
+
+        patterns: list[str] = []
+        j = i + 1
+        while j < len(panels) and panels[j].get("type") != "row":
+            for target in panels[j].get("targets", []):
+                patterns.extend(_NAME_PATTERN_RE.findall(target.get("expr", "")))
+            j += 1
+
+        if patterns:
+            services.append(
+                ServiceDef(
+                    display_name=_normalize_display_name(row_title),
+                    name_patterns=_unique_patterns(patterns),
+                    system_job="system_metrics",
+                )
+            )
+        i = j
+
     return services
+
+
+def _merge_services(*groups: list[ServiceDef]) -> list[ServiceDef]:
+    """Later groups override jobs on duplicate display_name; name_patterns are unioned."""
+    merged: dict[str, ServiceDef] = {}
+    for group in groups:
+        for svc in group:
+            existing = merged.get(svc.display_name)
+            if existing is None:
+                merged[svc.display_name] = svc
+                continue
+            patterns = _unique_patterns(existing.name_patterns + svc.name_patterns)
+            merged[svc.display_name] = ServiceDef(
+                display_name=svc.display_name,
+                name_patterns=patterns,
+                system_job=svc.system_job or existing.system_job,
+                api_job=svc.api_job if svc.api_job is not None else existing.api_job,
+            )
+    return list(merged.values())
+
+
+def _load_json_services(path: Path) -> list[ServiceDef]:
+    data = json.loads(path.read_text())
+    return [ServiceDef(**entry) for entry in data]
+
+
+def load_services(
+    services_path: str | Path | None = None,
+    ems_path: str | Path | None = None,
+) -> list[ServiceDef]:
+    services_path = Path(services_path) if services_path else _PROJECT_ROOT / "services.json"
+    ems_path = Path(ems_path) if ems_path else _PROJECT_ROOT / "ems.json"
+
+    general: list[ServiceDef] = []
+    if services_path.exists():
+        general = _load_json_services(services_path)
+        log.info("Loaded %d general service(s) from %s", len(general), services_path)
+    else:
+        log.info("No %s — skipping general services.", services_path)
+
+    if ems_path.exists():
+        ems = parse_ems_dashboard(ems_path)
+        log.info("Loaded %d EMS service(s) from %s", len(ems), ems_path)
+    else:
+        ems = list(DEFAULT_SERVICES)
+        log.warning("No %s — using DEFAULT_SERVICES (%d services).", ems_path, len(ems))
+
+    if not general and not ems:
+        return list(DEFAULT_SERVICES)
+
+    combined = _merge_services(ems, general)
+    log.info("Reporting on %d service(s) total.", len(combined))
+    return combined

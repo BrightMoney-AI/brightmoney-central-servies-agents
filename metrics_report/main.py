@@ -1,7 +1,14 @@
 """
 Entry point.
 
-  # Run on the daily schedule (blocks until killed)
+Setup (from project root):
+  python3 -m venv .venv && source .venv/bin/activate
+  pip install -r requirements.txt
+  cp .env.example .env   # set SLACK_BOT_TOKEN and SLACK_CHANNEL_ID
+
+Services: ems.json (EMS dashboard) + services.json (general) are merged automatically.
+
+  # Run on the daily schedule (blocks until killed; fires 10:00 IST)
   python -m metrics_report.main
 
   # Fire a report immediately and exit
