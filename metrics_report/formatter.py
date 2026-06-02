@@ -123,8 +123,6 @@ def build_slack_payload(report: MetricsReport, service_name: str = "All Services
     success = v.get("api_success_rate_pct")
     error   = v.get("api_error_rate_pct")
     avg_lat = v.get("api_avg_latency_ms")
-    p95_lat = v.get("api_p95_latency_ms")
-    p99_lat = v.get("api_p99_latency_ms")
 
     # ── Per-endpoint lookups ──────────────────────────────────────────────────
     ep_hits_map    = dict(ev.get("endpoint_hits",          []))
@@ -145,11 +143,9 @@ def build_slack_payload(report: MetricsReport, service_name: str = "All Services
         for s in all_servers
     ]
     api_icons = [
-        _icon(error,   settings.error_rate_warn_pct,     settings.error_rate_crit_pct),
+        _icon(error,   settings.error_rate_warn_pct, settings.error_rate_crit_pct),
         _icon(success, warn=95.0, crit=90.0, invert=True),
-        _icon(avg_lat, settings.avg_latency_warn_ms,     settings.avg_latency_crit_ms),
-        _icon(p95_lat, settings.avg_latency_warn_ms * 2, settings.avg_latency_crit_ms * 2),
-        _icon(p99_lat, settings.avg_latency_warn_ms * 3, settings.avg_latency_crit_ms * 3),
+        _icon(avg_lat, settings.avg_latency_warn_ms, settings.avg_latency_crit_ms),
     ]
     endpoint_icons = [
         _icon(ep_success_map.get(ep), warn=95.0, crit=90.0, invert=True)
@@ -205,12 +201,10 @@ def build_slack_payload(report: MetricsReport, service_name: str = "All Services
     blocks.append(_divider())
 
     # ── Aggregate API Metrics ─────────────────────────────────────────────────
-    err_ic  = _icon(error,   settings.error_rate_warn_pct,     settings.error_rate_crit_pct)
+    err_ic  = _icon(error,   settings.error_rate_warn_pct, settings.error_rate_crit_pct)
     suc_ic  = _icon(success, warn=95.0, crit=90.0, invert=True)
     tput_ic = "🟢" if tput is not None else "⚪"
-    alat_ic = _icon(avg_lat, settings.avg_latency_warn_ms,     settings.avg_latency_crit_ms)
-    p95_ic  = _icon(p95_lat, settings.avg_latency_warn_ms * 2, settings.avg_latency_crit_ms * 2)
-    p99_ic  = _icon(p99_lat, settings.avg_latency_warn_ms * 3, settings.avg_latency_crit_ms * 3)
+    alat_ic = _icon(avg_lat, settings.avg_latency_warn_ms, settings.avg_latency_crit_ms)
 
     blocks.append(_txt("*🌐   API METRICS*"))
     blocks.append(_fields(
@@ -219,11 +213,7 @@ def build_slack_payload(report: MetricsReport, service_name: str = "All Services
     ))
     blocks.append(_fields(
         f"{err_ic}  *Error Rate*\n`{_pct(error)}`",
-        f"{alat_ic}  *Avg Latency*\n`{_ms(avg_lat)}`",
-    ))
-    blocks.append(_fields(
-        f"{p95_ic}  *p95 Latency*\n`{_ms(p95_lat)}`",
-        f"{p99_ic}  *p99 Latency*\n`{_ms(p99_lat)}`",
+        f"{alat_ic}  *Avg Latency (p50)*\n`{_ms(avg_lat)}`",
     ))
 
     # ── Per-endpoint breakdown — one card per active endpoint ────────────────

@@ -123,8 +123,6 @@ def build_api_queries(
     s_success = mk('status=~"2.."')
     s_error   = mk('status=~"[^2].."')
     s_p50     = mk_lat('quantile="0.5"')
-    s_p95     = mk_lat('quantile="0.95"')
-    s_p99     = mk_lat('quantile="0.99"')
 
     return [
         Query(
@@ -151,16 +149,6 @@ def build_api_queries(
         Query(
             name="api_avg_latency_ms",
             promql=f"avg(avg_over_time(django_request_latency_seconds{s_p50}[{window}])) * 1000",
-            unit="ms",
-        ),
-        Query(
-            name="api_p95_latency_ms",
-            promql=f"avg(avg_over_time(django_request_latency_seconds{s_p95}[{window}])) * 1000",
-            unit="ms",
-        ),
-        Query(
-            name="api_p99_latency_ms",
-            promql=f"avg(avg_over_time(django_request_latency_seconds{s_p99}[{window}])) * 1000",
             unit="ms",
         ),
     ]
