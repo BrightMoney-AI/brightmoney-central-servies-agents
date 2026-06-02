@@ -6,6 +6,7 @@ class Settings(BaseSettings):
 
     vm_base_url: str = "http://vmselect-observability.brightmoney.net:8481/select/0/prometheus"
     gateway_timeout_secs: float = 5.0
+    query_window: str = "24h"
 
     slack_bot_token: str
     slack_channel_id: str

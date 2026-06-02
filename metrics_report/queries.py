@@ -1,14 +1,16 @@
 """
 L0 PromQL query builders.
 
-Queries are built at call-time by injecting a label selector fragment so the
-same query set can be scoped to any service without duplication.
+Queries are built at call-time with a configurable time window and an optional
+label selector so the same query set can be scoped to any service.
 
   selector = 'name=~"p-uaa-entity-manager.*", job="system_metrics"'
-  queries  = build_system_queries(selector)
+  queries  = build_system_queries(selector, window="24h")
 
-  # no filter — query all series
-  queries  = build_system_queries()
+Metric types and their window handling:
+  - Counters  (cpu, http_requests, latency buckets) → rate(...[window])
+  - Gauges    (memory, disk)                        → avg_over_time(...[window])
+  - Instant   (servers up/down)                     → no window — current state
 """
 from dataclasses import dataclass
 
@@ -34,25 +36,29 @@ def _app(sel: str) -> str:
 
 # ── System Health ──────────────────────────────────────────────────────────────
 
-def build_system_queries(selector: str = "") -> list[Query]:
+def build_system_queries(selector: str = "", window: str = "24h") -> list[Query]:
     w = _wrap(selector)
     a = _app(selector)
     return [
+        # Counter — rate() over window gives average CPU usage across the period
         Query(
             name="cpu_usage_pct",
-            promql=f'100 - avg(rate(node_cpu_seconds_total{{mode="idle"{a}}}[10m])) * 100',
+            promql=f'100 - avg(rate(node_cpu_seconds_total{{mode="idle"{a}}}[{window}])) * 100',
             unit="%",
         ),
+        # Gauge — avg_over_time() averages the gauge value across the period
         Query(
             name="memory_usage_pct",
-            promql=f"(1 - avg(node_memory_MemAvailable_bytes{w} / node_memory_MemTotal_bytes{w})) * 100",
+            promql=f"(1 - avg(avg_over_time(node_memory_MemAvailable_bytes{w}[{window}]) / avg_over_time(node_memory_MemTotal_bytes{w}[{window}]))) * 100",
             unit="%",
         ),
+        # Gauge — avg_over_time() for disk
         Query(
             name="disk_usage_pct",
-            promql=f'(1 - avg(node_filesystem_avail_bytes{{mountpoint="/"{a}}} / node_filesystem_size_bytes{{mountpoint="/"{a}}})) * 100',
+            promql=f'(1 - avg(avg_over_time(node_filesystem_avail_bytes{{mountpoint="/"{a}}}[{window}]) / avg_over_time(node_filesystem_size_bytes{{mountpoint="/"{a}}}[{window}]))) * 100',
             unit="%",
         ),
+        # Instant — current server state, not an average
         Query(
             name="servers_up",
             promql=f"count(up{w} == 1)",
@@ -68,38 +74,39 @@ def build_system_queries(selector: str = "") -> list[Query]:
 
 # ── API Metrics ────────────────────────────────────────────────────────────────
 
-def build_api_queries(selector: str = "") -> list[Query]:
+def build_api_queries(selector: str = "", window: str = "24h") -> list[Query]:
     w = _wrap(selector)
     a = _app(selector)
     return [
+        # All API metrics are counters — rate() over window
         Query(
             name="api_throughput_rps",
-            promql=f"sum(rate(http_requests_total{w}[10m]))",
+            promql=f"sum(rate(http_requests_total{w}[{window}]))",
             unit="rps",
         ),
         Query(
             name="api_success_rate_pct",
-            promql=f'sum(rate(http_requests_total{{status=~"2.."{a}}}[10m])) / sum(rate(http_requests_total{w}[10m])) * 100',
+            promql=f'sum(rate(http_requests_total{{status=~"2.."{a}}}[{window}])) / sum(rate(http_requests_total{w}[{window}])) * 100',
             unit="%",
         ),
         Query(
             name="api_error_rate_pct",
-            promql=f'sum(rate(http_requests_total{{status=~"5.."{a}}}[10m])) / sum(rate(http_requests_total{w}[10m])) * 100',
+            promql=f'sum(rate(http_requests_total{{status=~"5.."{a}}}[{window}])) / sum(rate(http_requests_total{w}[{window}])) * 100',
             unit="%",
         ),
         Query(
             name="api_avg_latency_ms",
-            promql=f"sum(rate(http_request_duration_seconds_sum{w}[10m])) / sum(rate(http_request_duration_seconds_count{w}[10m])) * 1000",
+            promql=f"sum(rate(http_request_duration_seconds_sum{w}[{window}])) / sum(rate(http_request_duration_seconds_count{w}[{window}])) * 1000",
             unit="ms",
         ),
         Query(
             name="api_p95_latency_ms",
-            promql=f"histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{w}[10m])) by (le)) * 1000",
+            promql=f"histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{w}[{window}])) by (le)) * 1000",
             unit="ms",
         ),
         Query(
             name="api_p99_latency_ms",
-            promql=f"histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{w}[10m])) by (le)) * 1000",
+            promql=f"histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{w}[{window}])) by (le)) * 1000",
             unit="ms",
         ),
     ]

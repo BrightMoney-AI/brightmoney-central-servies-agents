@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .config import settings
 from .gateway import FailedQuery, MetricsGateway
 from .queries import build_api_queries, build_system_queries
 from .services import ServiceDef
@@ -33,7 +34,8 @@ async def collect(
     sys_sel = service.system_selector if service else ""
     api_sel = service.api_selector if service else ""
 
-    all_queries = build_system_queries(sys_sel) + build_api_queries(api_sel)
+    window = settings.query_window
+    all_queries = build_system_queries(sys_sel, window) + build_api_queries(api_sel, window)
 
     for query in all_queries:
         log.info("Collecting [%s]: %s", service.display_name if service else "all", query.name)
