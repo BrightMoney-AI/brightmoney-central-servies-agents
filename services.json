@@ -1,0 +1,8 @@
+[
+  {
+    "display_name": "UAA Entity Manager",
+    "name_pattern": "p-uaa-entity-manager.*",
+    "system_job": "system_metrics",
+    "api_job": null
+  }
+]
