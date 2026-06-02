@@ -8,12 +8,19 @@ services.json format (project root):
     "display_name": "UAA Entity Manager",
     "name_patterns": ["p-uaa-em-.*", "p-uaa-entity-manager.*"],
     "system_job": "system_metrics",
-    "api_job": null
+    "api_job": "platform_statsd_metrics",
+    "api_name_patterns": ["p.*-uaa-entity-manager-.*"],
+    "api_exclude_endpoints": ["//api/account-meta/v0/get/"],
+    "api_method": "POST"
   }
 ]
 
 Multiple name_patterns are joined into a single PromQL regex with |:
   name=~"p-uaa-em-.*|p-uaa-entity-manager.*"
+
+api_name_patterns:      if set, overrides name_patterns for API/endpoint queries.
+api_exclude_endpoints:  endpoints to exclude from per-endpoint breakdown (noise filtering).
+api_method:             if set, adds method="..." filter to hit/success/error queries.
 
 If services.json is absent, one report is generated with no label filter (all services).
 """
@@ -31,14 +38,18 @@ log = logging.getLogger(__name__)
 @dataclass
 class ServiceDef:
     display_name: str
-    name_patterns: list[str] = field(default_factory=list)  # empty = no filter
+    name_patterns: list[str] = field(default_factory=list)   # system + fallback API filter
     system_job: Optional[str] = None
     api_job: Optional[str] = None
+    api_name_patterns: list[str] = field(default_factory=list)      # overrides name_patterns for API queries
+    api_exclude_endpoints: list[str] = field(default_factory=list) # endpoints to exclude from per-endpoint section
+    api_method: Optional[str] = None                               # method filter for per-endpoint queries
 
-    def _name_selector(self) -> Optional[str]:
-        if not self.name_patterns:
+    def _name_selector(self, patterns: Optional[list[str]] = None) -> Optional[str]:
+        p = patterns if patterns is not None else self.name_patterns
+        if not p:
             return None
-        regex = "|".join(self.name_patterns)
+        regex = "|".join(p)
         return f'name=~"{regex}"'
 
     @property
@@ -54,7 +65,8 @@ class ServiceDef:
     @property
     def api_selector(self) -> str:
         parts = []
-        name = self._name_selector()
+        patterns = self.api_name_patterns if self.api_name_patterns else self.name_patterns
+        name = self._name_selector(patterns)
         if name:
             parts.append(name)
         if self.api_job:

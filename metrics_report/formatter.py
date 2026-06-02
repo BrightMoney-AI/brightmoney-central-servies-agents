@@ -1,8 +1,9 @@
 """
 ReportFormatter — builds a Slack Block Kit payload from a MetricsReport.
 
-System health: one row per server (CPU / MEM / Disk).
-API metrics:   aggregated across all instances.
+System health:    one row per server (CPU / MEM / Disk).
+API metrics:      aggregated across all instances.
+API endpoints:    one row per endpoint (hits / success% / errors / p99).
 
 Status icons:
   🟢  healthy    🟡  warning    🔴  critical    ⚪  no data
@@ -40,6 +41,12 @@ def _rps(value: Optional[float]) -> str:
     return "N/A" if value is None else f"{value:.1f} rps"
 
 
+def _count(value: Optional[float]) -> str:
+    if value is None:
+        return "N/A"
+    return f"{int(value):,}"
+
+
 def _overall_status(icons: list[str]) -> tuple[str, str]:
     if "🔴" in icons:
         return "🔴", "CRITICAL"
@@ -66,11 +73,39 @@ def _context(text: str) -> dict:
     return {"type": "context", "elements": [{"type": "mrkdwn", "text": text}]}
 
 
+def _worst_icon(*icons: str) -> str:
+    for ic in ("🔴", "🟡", "🟢"):
+        if ic in icons:
+            return ic
+    return "⚪"
+
+
+def _lines_to_blocks(lines: list[str], sep: str = "\n\n", limit: int = 2800) -> list[dict]:
+    """Split a list of text lines into section blocks, respecting Slack's 3000-char limit."""
+    blocks: list[dict] = []
+    current: list[str] = []
+    current_len = 0
+    for line in lines:
+        added = (len(sep) if current else 0) + len(line)
+        if current and current_len + added > limit:
+            blocks.append(_txt(sep.join(current)))
+            current = [line]
+            current_len = len(line)
+        else:
+            current.append(line)
+            current_len += added
+    if current:
+        blocks.append(_txt(sep.join(current)))
+    return blocks
+
+
 # ── Main builder ───────────────────────────────────────────────────────────────
 
 def build_slack_payload(report: MetricsReport, service_name: str = "All Services") -> dict:
-    v = report.values
+    v  = report.values
     sv = report.server_values
+    ev = report.endpoint_values
+
     now = datetime.now(IST)
     date_str = now.strftime("%A, %d %b %Y")
     time_str = now.strftime("%I:%M %p IST")
@@ -79,18 +114,24 @@ def build_slack_payload(report: MetricsReport, service_name: str = "All Services
     cpu_map  = dict(sv.get("cpu_usage_pct",   []))
     mem_map  = dict(sv.get("memory_usage_pct", []))
     disk_map = dict(sv.get("disk_usage_pct",   []))
-
     all_servers = sorted(set(cpu_map) | set(mem_map) | set(disk_map))
 
-    # ── Aggregate values ──────────────────────────────────────────────────────
-    s_up  = v.get("servers_up")
-    s_dn  = v.get("servers_down")
+    # ── Aggregate API values ──────────────────────────────────────────────────
+    s_up    = v.get("servers_up")
+    s_dn    = v.get("servers_down")
     tput    = v.get("api_throughput_rps")
     success = v.get("api_success_rate_pct")
     error   = v.get("api_error_rate_pct")
     avg_lat = v.get("api_avg_latency_ms")
     p95_lat = v.get("api_p95_latency_ms")
     p99_lat = v.get("api_p99_latency_ms")
+
+    # ── Per-endpoint lookups ──────────────────────────────────────────────────
+    ep_hits_map    = dict(ev.get("endpoint_hits",          []))
+    ep_success_map = dict(ev.get("endpoint_success_pct",   []))
+    ep_error_map   = dict(ev.get("endpoint_error_count",   []))
+    ep_p99_map     = dict(ev.get("endpoint_p99_latency_ms", []))
+    all_endpoints  = sorted(set(ep_hits_map) | set(ep_success_map) | set(ep_error_map) | set(ep_p99_map))
 
     # ── Collect all status icons for overall health ───────────────────────────
     server_icons = [
@@ -110,7 +151,15 @@ def build_slack_payload(report: MetricsReport, service_name: str = "All Services
         _icon(p95_lat, settings.avg_latency_warn_ms * 2, settings.avg_latency_crit_ms * 2),
         _icon(p99_lat, settings.avg_latency_warn_ms * 3, settings.avg_latency_crit_ms * 3),
     ]
-    status_icon, status_label = _overall_status(server_icons + api_icons)
+    endpoint_icons = [
+        _icon(ep_success_map.get(ep), warn=95.0, crit=90.0, invert=True)
+        for ep in all_endpoints
+    ] + [
+        _icon(ep_p99_map.get(ep), settings.avg_latency_warn_ms * 3, settings.avg_latency_crit_ms * 3)
+        for ep in all_endpoints
+    ]
+
+    status_icon, status_label = _overall_status(server_icons + api_icons + endpoint_icons)
 
     blocks: list[dict] = []
 
@@ -142,7 +191,7 @@ def build_slack_payload(report: MetricsReport, service_name: str = "All Services
                 f"*{server}*\n"
                 f"{ci} CPU `{_pct(cpu)}`   {mi} MEM `{_pct(mem)}`   {di} Disk `{_pct(disk)}`"
             )
-        blocks.append(_txt("\n\n".join(server_lines)))
+        blocks.extend(_lines_to_blocks(server_lines))
     else:
         blocks.append(_txt("⚪  No server data returned"))
 
@@ -155,7 +204,7 @@ def build_slack_payload(report: MetricsReport, service_name: str = "All Services
     blocks.append(_txt(srv_line))
     blocks.append(_divider())
 
-    # ── API Metrics ───────────────────────────────────────────────────────────
+    # ── Aggregate API Metrics ─────────────────────────────────────────────────
     err_ic  = _icon(error,   settings.error_rate_warn_pct,     settings.error_rate_crit_pct)
     suc_ic  = _icon(success, warn=95.0, crit=90.0, invert=True)
     tput_ic = "🟢" if tput is not None else "⚪"
@@ -176,6 +225,46 @@ def build_slack_payload(report: MetricsReport, service_name: str = "All Services
         f"{p95_ic}  *p95 Latency*\n`{_ms(p95_lat)}`",
         f"{p99_ic}  *p99 Latency*\n`{_ms(p99_lat)}`",
     ))
+
+    # ── Per-endpoint breakdown — one card per active endpoint ────────────────
+    # Active = had at least 1 hit in the window; sorted by hits desc.
+    active_endpoints = sorted(
+        [ep for ep in all_endpoints if (ep_hits_map.get(ep) or 0) >= 1],
+        key=lambda ep: ep_hits_map.get(ep) or 0,
+        reverse=True,
+    )
+
+    if active_endpoints:
+        MAX_EP = 25  # keeps total block count under Slack's 50-block limit
+        shown   = active_endpoints[:MAX_EP]
+        hidden  = len(active_endpoints) - len(shown)
+
+        blocks.append(_divider())
+        blocks.append(_txt("*📡   API ENDPOINTS*"))
+        tail = f"   ·   *+{hidden} more not shown*" if hidden else ""
+        blocks.append(_context(
+            f"*{len(active_endpoints)} endpoint{'s' if len(active_endpoints) != 1 else ''} "
+            f"with traffic in the past 24 h*   ·   sorted by hits{tail}"
+        ))
+
+        for ep in shown:
+            hits   = ep_hits_map.get(ep)
+            suc    = ep_success_map.get(ep)
+            errors = ep_error_map.get(ep)
+            p99    = ep_p99_map.get(ep)
+
+            suc_i = _icon(suc, warn=95.0, crit=90.0, invert=True)
+            err_i = "🔴" if (errors or 0) > 0 else ("🟢" if errors is not None else "⚪")
+            p99_i = _icon(p99, settings.avg_latency_warn_ms * 3, settings.avg_latency_crit_ms * 3)
+            row_i = _worst_icon(suc_i, err_i, p99_i)
+
+            blocks.append(_txt(
+                f"{row_i}  *`{ep}`*\n"
+                f"`{_count(hits)} hits`   ·   "
+                f"{suc_i} `{_pct(suc)} success`   ·   "
+                f"{err_i} `{_count(errors)} errors`   ·   "
+                f"{p99_i} `{_ms(p99)} p99`"
+            ))
 
     # ── Failed queries ────────────────────────────────────────────────────────
     if report.failures:

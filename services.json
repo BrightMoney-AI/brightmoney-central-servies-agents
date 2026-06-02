@@ -3,6 +3,12 @@
     "display_name": "UAA Entity Manager",
     "name_patterns": ["p-uaa-em-.*", "p-uaa-entity-manager.*"],
     "system_job": "system_metrics",
-    "api_job": null
+    "api_job": "platform_statsd_metrics",
+    "api_name_patterns": ["p.*-uaa-entity-manager-.*"],
+    "api_exclude_endpoints": [
+      "//api/account-meta/v0/get/",
+      "//api/accounts/mask_change/"
+    ],
+    "api_method": "POST"
   }
 ]
