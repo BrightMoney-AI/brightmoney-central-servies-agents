@@ -58,7 +58,7 @@ def _infer_group(server_name: str) -> str:
 
 # ── Main builder ───────────────────────────────────────────────────────────────
 
-def to_l0_report(report: MetricsReport, service_name: str = "All Services") -> L0Report:
+def to_l0_report(report: MetricsReport, service_name: str = "All Services", show_api_metrics: bool = True) -> L0Report:
     """Convert a raw MetricsReport into a typed L0Report. Reusable by canvas renderer."""
     v  = report.values
     sv = report.server_values
@@ -178,6 +178,7 @@ def to_l0_report(report: MetricsReport, service_name: str = "All Services") -> L
         thresholds           = thresholds,
         total_endpoint_count = len(active_ep),
         queues               = queue_health,
+        show_api_metrics     = show_api_metrics,
     )
 
 
