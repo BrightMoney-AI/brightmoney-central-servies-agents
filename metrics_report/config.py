@@ -23,5 +23,21 @@ class Settings(BaseSettings):
     avg_latency_warn_ms: float = 500.0
     avg_latency_crit_ms: float = 1000.0
 
+    # Kafka Connect REST API base URLs (empty = disabled)
+    kafka_connect_kafka_sink_url: str = ""
+    kafka_connect_cdc_sink_url: str = ""
+    kafka_connect_debezium_url: str = ""
+
+    @property
+    def kafka_connect_instances(self) -> dict:
+        result = {}
+        if self.kafka_connect_kafka_sink_url:
+            result["Kafka Sink"] = self.kafka_connect_kafka_sink_url
+        if self.kafka_connect_cdc_sink_url:
+            result["CDC Sink"] = self.kafka_connect_cdc_sink_url
+        if self.kafka_connect_debezium_url:
+            result["Debezium"] = self.kafka_connect_debezium_url
+        return result
+
 
 settings = Settings()

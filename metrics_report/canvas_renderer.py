@@ -7,8 +7,9 @@ are ## sub-sections that get collapse arrows in the Slack Canvas UI.
 """
 from __future__ import annotations
 from datetime import timezone
+from typing import Optional
 
-from .models import L0Report, Status
+from .models import KafkaConnectHealth, L0Report, Status
 from .renderer import (
     IST,
     _endpoint_is_flagged,
@@ -180,7 +181,41 @@ def _render_queue_section(reports: list[tuple[str, L0Report]]) -> str:
     return "\n".join(lines)
 
 
-def render_canvas(reports: list[tuple[str, L0Report]], title: str = "") -> str:
+def _render_connector_section(connector_health: KafkaConnectHealth) -> str:
+    """Render a ## Connector Health section with one ### per Kafka Connect instance."""
+    if not connector_health.instances:
+        return ""
+
+    lines: list[str] = ["## Connector Health", ""]
+    for instance in connector_health.instances:
+        n_unhealthy = len(instance.unhealthy)
+        if n_unhealthy == 0:
+            summary = f"✅ All {instance.total} healthy"
+        else:
+            summary = f"⚠️ {n_unhealthy} unhealthy"
+
+        lines.append(f"### {instance.name} · {instance.total} connectors · {summary}")
+        lines.append("")
+
+        if instance.unhealthy:
+            lines.append("| Connector | State | Tasks |")
+            lines.append("|---|---|---|")
+            for c in sorted(instance.unhealthy, key=lambda x: x.name):
+                running = sum(1 for t in c.tasks if t.state == "RUNNING")
+                total_t = len(c.tasks)
+                task_str = f"{running}/{total_t} running" if c.tasks else "—"
+                state_emoji = "🔴" if c.state in ("FAILED", "UNKNOWN") else "🟡"
+                lines.append(f"| `{c.name}` | {state_emoji} {c.state} | {task_str} |")
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+def render_canvas(
+    reports: list[tuple[str, L0Report]],
+    title: str = "",
+    connector_health: Optional[KafkaConnectHealth] = None,
+) -> str:
     """
     Returns full canvas markdown.
 
@@ -192,12 +227,18 @@ def render_canvas(reports: list[tuple[str, L0Report]], title: str = "") -> str:
       ---
       ## Queue Metrics       ← consolidated queue table, one ### per service
       ---
+      ## Connector Health    ← Data Platform only, one ### per KC instance
+      ---
       legend
     """
     sections = [_render_service(report) for _, report in reports]
     queue_section = _render_queue_section(reports)
     if queue_section:
         sections.append(queue_section)
+    if connector_health:
+        connector_section = _render_connector_section(connector_health)
+        if connector_section:
+            sections.append(connector_section)
 
     header = f"# {title}\n\n" if title else ""
     footer = "\n\n---\n\n🟢 Healthy   🟡 Warning 40-59%   🔴 Critical ≥60%   ·   brightmoney observability"
