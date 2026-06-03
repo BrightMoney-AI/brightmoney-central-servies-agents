@@ -3,6 +3,7 @@ renderer.py — converts L0Report into a Slack Block Kit payload dict.
 
 render(report) -> {"text": ..., "blocks": [...]}
 """
+from __future__ import annotations
 from datetime import timezone, timedelta
 
 from .models import Endpoint, FlaggingThresholds, L0Report, Server, Status

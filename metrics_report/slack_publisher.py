@@ -1,6 +1,7 @@
 """
 SlackPublisher — posts Block Kit payloads or a Canvas to a Slack channel.
 """
+from __future__ import annotations
 import logging
 
 from slack_sdk.web.async_client import AsyncWebClient

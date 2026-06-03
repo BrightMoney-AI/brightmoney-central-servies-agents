@@ -3,6 +3,7 @@ Thin async wrapper around the VictoriaMetrics Prometheus-compatible HTTP API.
 Supports instant queries (/api/v1/query) returning a single scalar or the
 first result value from a vector.
 """
+from __future__ import annotations
 import logging
 from typing import Optional
 

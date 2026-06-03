@@ -65,6 +65,7 @@ class ServiceDef:
     api_method: Optional[str] = None                               # method filter for per-endpoint queries
     api_request_metric: str = "django_request_count"               # override for services using a different counter metric
     api_response_metric: str = "django_http_responses_total_by_status"  # override for services using a different response metric
+    report_group: str = "Central Services"                         # which canvas this service appears in
 
     def _name_selector(self, patterns: Optional[list[str]] = None) -> Optional[str]:
         p = patterns if patterns is not None else self.name_patterns

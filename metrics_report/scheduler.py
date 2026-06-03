@@ -1,9 +1,11 @@
 """
 Scheduler — fires the report job daily at 10:00 IST (04:30 UTC).
-Collects all service metrics, then posts ONE Slack Canvas with every
-service report stacked as a collapsible section.
+Collects all service metrics, then posts ONE Slack Canvas per report_group
+(e.g. "UAA Services", "Central Services", "Data Platform").
 """
+from __future__ import annotations
 import logging
+from collections import defaultdict
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -24,20 +26,23 @@ IST = timezone(timedelta(hours=5, minutes=30))
 
 log = logging.getLogger(__name__)
 
+# Canonical display order for canvas groups
+_GROUP_ORDER = ["UAA Services", "Central Services", "Data Platform"]
+
 
 async def run_report() -> None:
     services = load_services()
     log.info("Starting L0 metrics report for %d service(s)...", len(services))
 
     gateway = MetricsGateway(timeout_secs=settings.gateway_timeout_secs)
-    collected: list[tuple[str, object]] = []  # (display_name, L0Report)
+    groups: dict[str, list[tuple[str, object]]] = defaultdict(list)
 
     async with VMClient(settings.vm_base_url) as vm:
         for service in services:
-            log.info("Collecting: %s", service.display_name)
+            log.info("Collecting: %s [group=%s]", service.display_name, service.report_group)
             raw = await collect(vm, gateway, service)
             l0  = to_l0_report(raw, service_name=service.display_name)
-            collected.append((service.display_name, l0))
+            groups[service.report_group].append((service.display_name, l0))
 
             if raw.failures:
                 log.warning(
@@ -49,19 +54,27 @@ async def run_report() -> None:
             else:
                 log.info("[%s] All queries succeeded.", service.display_name)
 
-    if not collected:
+    if not groups:
         log.warning("No services collected — skipping Canvas post.")
         return
 
-    ts_ist         = datetime.now(IST)
-    canvas_title   = f"L0 Daily Metrics — {ts_ist.strftime('%d %b %Y')}"
-    markdown       = render_canvas(collected, title=canvas_title)
-    summary_blocks = _summary_blocks(collected)
-    await publish_canvas(markdown, summary_blocks, title=canvas_title)
-    log.info("Canvas posted for %d service(s).", len(collected))
+    ts_ist   = datetime.now(IST)
+    date_str = ts_ist.strftime("%d %b %Y")
+
+    # Post canvases in canonical order, then any unrecognised groups last
+    ordered_keys = [g for g in _GROUP_ORDER if g in groups]
+    ordered_keys += [g for g in groups if g not in _GROUP_ORDER]
+
+    for group_name in ordered_keys:
+        collected      = groups[group_name]
+        canvas_title   = f"{group_name} — L0 Daily Metrics — {date_str}"
+        markdown       = render_canvas(collected, title=canvas_title)
+        summary_blocks = _summary_blocks(collected, group_name)
+        await publish_canvas(markdown, summary_blocks, title=canvas_title)
+        log.info("Canvas posted: %r (%d service(s)).", canvas_title, len(collected))
 
 
-def _summary_blocks(collected: list[tuple[str, object]]) -> list[dict]:
+def _summary_blocks(collected: list[tuple[str, object]], group_name: str = "L0 Daily Metrics") -> list[dict]:
     """Build compact Block Kit blocks for the chat notification message."""
     from .models import L0Report
 
@@ -96,7 +109,7 @@ def _summary_blocks(collected: list[tuple[str, object]]) -> list[dict]:
     blocks: list[dict] = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": "📊  L0 Daily Metrics Report", "emoji": True},
+            "text": {"type": "plain_text", "text": f"📊  {group_name} — L0 Daily Metrics", "emoji": True},
         },
         {
             "type": "context",

@@ -2,6 +2,7 @@
 MetricsGateway — serialises all VM queries (one at a time) with a hard 5 s timeout.
 Failed queries are collected and surfaced in the final report rather than raising.
 """
+from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field

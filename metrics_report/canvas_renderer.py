@@ -5,6 +5,7 @@ All service reports are stacked in one document.
 Each service is a collapsible # heading; System Health / API Metrics / Endpoints
 are ## sub-sections that get collapse arrows in the Slack Canvas UI.
 """
+from __future__ import annotations
 from datetime import timezone, timedelta
 
 from .models import Endpoint, FlaggingThresholds, L0Report, Status
