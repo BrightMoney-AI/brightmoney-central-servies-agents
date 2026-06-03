@@ -17,7 +17,6 @@ from .renderer import (
     _fmt_p99,
     _fmt_pct,
     _group_summary,
-    _short_name,
 )
 
 _EMOJI = {
@@ -73,7 +72,7 @@ def _render_service(report: L0Report) -> str:
         for server in sys.servers:
             m = server.metrics
             lines.append(
-                f"- `{_short_name(server.name)}` "
+                f"- `{server.name}` "
                 f"CPU {m.cpu_pct:.0f}% · "
                 f"MEM {m.mem_pct:.0f}% · "
                 f"Disk {m.disk_pct:.0f}%"
