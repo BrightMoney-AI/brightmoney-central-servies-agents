@@ -60,6 +60,16 @@
     "api_response_metric": "django_http_responses_before_middlewares_total"
   },
   {
+    "display_name": "KYC",
+    "name_patterns": ["p.*-kyc-app-.*"],
+    "system_job": "system_metrics"
+  },
+  {
+    "display_name": "UCB Core",
+    "name_patterns": ["p-ucb-core-.*", "p-ucb-gateway-api-.*"],
+    "system_job": "system_metrics"
+  },
+  {
     "display_name": "Core UAA",
     "name_patterns": ["p-uaa-core.*"],
     "system_job": "system_metrics",
