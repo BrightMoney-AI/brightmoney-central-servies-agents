@@ -6,9 +6,9 @@ Each service is a collapsible # heading; System Health / API Metrics / Endpoints
 are ## sub-sections that get collapse arrows in the Slack Canvas UI.
 """
 from __future__ import annotations
-from datetime import timezone, timedelta
+from datetime import timezone
 
-from .models import Endpoint, FlaggingThresholds, L0Report, Status
+from .models import L0Report, Status
 from .renderer import (
     IST,
     _endpoint_is_flagged,
@@ -157,19 +157,48 @@ def _render_service(report: L0Report) -> str:
     return "\n".join(lines)
 
 
+def _render_queue_section(reports: list[tuple[str, L0Report]]) -> str:
+    """Render a single ## Queue Metrics section covering all services with queues."""
+    services_with_queues = [
+        (name, report) for name, report in reports
+        if report.queues and report.queues.queues
+    ]
+    if not services_with_queues:
+        return ""
+
+    lines: list[str] = ["## Queue Metrics", ""]
+    for name, report in services_with_queues:
+        lines.append(f"### {name}")
+        lines.append("")
+        lines.append("| Queue | Ready | Unacked | Total |")
+        lines.append("|---|---|---|---|")
+        for q in sorted(report.queues.queues, key=lambda x: x.ready, reverse=True):
+            ready_flag = " ⚠️" if q.ready >= 500 else (" 🟡" if q.ready >= 100 else "")
+            lines.append(f"| `{q.name}` | {q.ready}{ready_flag} | {q.unacked} | {q.total} |")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def render_canvas(reports: list[tuple[str, L0Report]], title: str = "") -> str:
     """
     Returns full canvas markdown.
 
     Structure:
-      # {title}          ← top-level heading = canvas display title
-      ## Service A ...   ← each service is a collapsible ## section
+      # {title}
+      ## Service A ...
       ---
       ## Service B ...
-      ...
+      ---
+      ## Queue Metrics       ← consolidated queue table, one ### per service
+      ---
+      legend
     """
     sections = [_render_service(report) for _, report in reports]
-    body     = "\n\n---\n\n".join(sections)
-    header   = f"# {title}\n\n" if title else ""
-    footer   = "\n\n---\n\n🟢 Healthy   🟡 Warning 40-59%   🔴 Critical ≥60%   ·   brightmoney observability"
-    return header + body + footer
+    queue_section = _render_queue_section(reports)
+    if queue_section:
+        sections.append(queue_section)
+
+    header = f"# {title}\n\n" if title else ""
+    footer = "\n\n---\n\n🟢 Healthy   🟡 Warning 40-59%   🔴 Critical ≥60%   ·   brightmoney observability"
+    return header + "\n\n---\n\n".join(sections) + footer

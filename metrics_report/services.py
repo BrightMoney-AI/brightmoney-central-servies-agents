@@ -66,6 +66,7 @@ class ServiceDef:
     api_request_metric: str = "django_request_count"               # override for services using a different counter metric
     api_response_metric: str = "django_http_responses_total_by_status"  # override for services using a different response metric
     report_group: str = "Central Services"                         # which canvas this service appears in
+    rabbitmq_queues: list[str] = field(default_factory=list)       # RabbitMQ queue names to monitor
 
     def _name_selector(self, patterns: Optional[list[str]] = None) -> Optional[str]:
         p = patterns if patterns is not None else self.name_patterns
@@ -97,11 +98,6 @@ class ServiceDef:
 
 
 DEFAULT_SERVICES: list[ServiceDef] = [
-    ServiceDef(
-        display_name="Superset",
-        name_patterns=["p-superset-server-01"],
-        system_job="system_metrics",
-    ),
     ServiceDef(
         display_name="Firestore",
         name_patterns=["p-firestore-app-.*", "p-firestore-celery-server-.*"],
@@ -232,6 +228,7 @@ def _merge_services(*groups: list[ServiceDef]) -> list[ServiceDef]:
                 name_patterns=patterns,
                 system_job=svc.system_job or existing.system_job,
                 api_job=svc.api_job if svc.api_job is not None else existing.api_job,
+                report_group=svc.report_group,
             )
     return list(merged.values())
 

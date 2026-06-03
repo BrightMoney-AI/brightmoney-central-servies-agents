@@ -10,7 +10,14 @@
       "//api/account-meta/v0/get/",
       "//api/accounts/mask_change/"
     ],
-    "api_method": "POST"
+    "api_method": "POST",
+    "rabbitmq_queues": [
+      "brightmoney_entity_manager_onboarding",
+      "brightmoney_entity_manager_offline",
+      "brightmoney_entity_manager_recon_offline",
+      "entity_manager_payments_recon",
+      "uaa_em_offline_queue"
+    ]
   },
   {
     "display_name": "Core UAA",
@@ -22,7 +29,12 @@
     "api_exclude_endpoints": ["/ping/"],
     "api_method": "POST",
     "api_request_metric": "django_http_requests_before_middlewares_total",
-    "api_response_metric": "django_http_responses_before_middlewares_total"
+    "api_response_metric": "django_http_responses_before_middlewares_total",
+    "rabbitmq_queues": [
+      "brightmoney_core_uaa_onboarding",
+      "brightmoney_brightapp_onboarding",
+      "brightmoney_uaa_crbaa_onboarding"
+    ]
   },
   {
     "display_name": "Transaction Insight",
@@ -31,7 +43,11 @@
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
     "api_name_patterns": ["p-uaa-transaction-insight-.*"],
-    "api_exclude_endpoints": ["/ping/", "/", "/favicon.ico"]
+    "api_exclude_endpoints": ["/ping/", "/", "/favicon.ico"],
+    "rabbitmq_queues": [
+      "brightmoney_transaction_insight",
+      "uaa_ti_offline_queue"
+    ]
   },
   {
     "display_name": "UAA Routing",
@@ -53,7 +69,8 @@
     "api_exclude_endpoints": ["/api/webhooks/v0/webhook-handler/", "/ping/"],
     "api_method": "POST",
     "api_request_metric": "django_http_responses_total_by_status",
-    "api_response_metric": "django_http_responses_before_middlewares_total"
+    "api_response_metric": "django_http_responses_before_middlewares_total",
+    "rabbitmq_queues": ["brightmoney_plaid_onboarding"]
   },
   {
     "display_name": "UAA CapOne",
@@ -65,7 +82,8 @@
     "api_exclude_endpoints": ["/ping/"],
     "api_method": "POST",
     "api_request_metric": "django_http_responses_total_by_status",
-    "api_response_metric": "django_http_responses_before_middlewares_total"
+    "api_response_metric": "django_http_responses_before_middlewares_total",
+    "rabbitmq_queues": ["brightmoney_capitalone_onboarding"]
   },
   {
     "display_name": "UAA Metadata",
@@ -87,6 +105,48 @@
     "display_name": "UCB Core",
     "report_group": "UAA Services",
     "name_patterns": ["p-ucb-core-.*", "p-ucb-gateway-api-.*"],
+    "system_job": "system_metrics"
+  },
+  {
+    "display_name": "UAA Webhook",
+    "report_group": "UAA Services",
+    "name_patterns": ["p-uaa-webhook-.*"],
+    "system_job": "system_metrics"
+  },
+  {
+    "display_name": "Superset",
+    "report_group": "Data Platform",
+    "name_patterns": ["p-superset-server-01"],
+    "system_job": "system_metrics"
+  },
+  {
+    "display_name": "Cosmos",
+    "report_group": "Data Platform",
+    "name_patterns": ["p-cosmos.*"],
+    "system_job": "system_metrics"
+  },
+  {
+    "display_name": "Debezium",
+    "report_group": "Data Platform",
+    "name_patterns": ["p-debezium.*"],
+    "system_job": "system_metrics"
+  },
+  {
+    "display_name": "Iceberg Sink",
+    "report_group": "Data Platform",
+    "name_patterns": ["p-iceberg-sink-.*"],
+    "system_job": "system_metrics"
+  },
+  {
+    "display_name": "Apicurio",
+    "report_group": "Data Platform",
+    "name_patterns": ["p-dp-apicurio-.*"],
+    "system_job": "system_metrics"
+  },
+  {
+    "display_name": "Confluent Schema Registry",
+    "report_group": "Data Platform",
+    "name_patterns": ["p-confluent-schema-registry.*"],
     "system_job": "system_metrics"
   }
 ]
