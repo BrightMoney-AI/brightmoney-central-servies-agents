@@ -82,6 +82,35 @@ class QueueHealth:
 
 
 @dataclass
+class ConnectorTask:
+    id: int
+    state: str  # RUNNING, FAILED, UNASSIGNED, PAUSED
+
+
+@dataclass
+class ConnectorStatus:
+    name: str
+    state: str  # RUNNING, FAILED, PAUSED, UNASSIGNED, RESTARTING, STOPPED
+    tasks: list[ConnectorTask]
+
+    @property
+    def is_healthy(self) -> bool:
+        return self.state == "RUNNING" and all(t.state == "RUNNING" for t in self.tasks)
+
+
+@dataclass
+class KafkaConnectInstance:
+    name: str                       # display name, e.g. "Kafka Sink"
+    total: int                      # total connector count
+    unhealthy: list[ConnectorStatus]
+
+
+@dataclass
+class KafkaConnectHealth:
+    instances: list[KafkaConnectInstance]
+
+
+@dataclass
 class L0Report:
     service:              str
     reported_at:          datetime
