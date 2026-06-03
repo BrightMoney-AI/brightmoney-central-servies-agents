@@ -69,6 +69,19 @@ class Endpoint:
 
 
 @dataclass
+class QueueDepth:
+    name:    str
+    ready:   int
+    unacked: int
+    total:   int
+
+
+@dataclass
+class QueueHealth:
+    queues: list[QueueDepth]
+
+
+@dataclass
 class L0Report:
     service:              str
     reported_at:          datetime
@@ -77,4 +90,5 @@ class L0Report:
     api:                  ApiMetrics
     endpoints:            list[Endpoint]
     thresholds:           FlaggingThresholds = field(default_factory=FlaggingThresholds)
-    total_endpoint_count: int = 0  # total including any not in the list
+    total_endpoint_count: int = 0
+    queues:               Optional[QueueHealth] = None

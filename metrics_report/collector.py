@@ -13,7 +13,7 @@ from typing import Optional
 
 from .config import settings
 from .gateway import FailedQuery, MetricsGateway
-from .queries import build_api_queries, build_per_endpoint_queries, build_system_queries
+from .queries import build_api_queries, build_per_endpoint_queries, build_queue_queries, build_system_queries
 from .services import ServiceDef
 from .vm_client import VMClient
 
@@ -28,6 +28,8 @@ class MetricsReport:
     server_values: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
     # Per-endpoint API metrics — metric name → [(endpoint_path, value), ...]
     endpoint_values: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
+    # Per-queue RabbitMQ depth — metric name → [(queue_name, value), ...]
+    queue_values: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
     failures: list[FailedQuery] = field(default_factory=list)
 
 
@@ -40,6 +42,7 @@ async def collect(
     values: dict[str, Optional[float]] = {}
     server_values: dict[str, list[tuple[str, float]]] = {}
     endpoint_values: dict[str, list[tuple[str, float]]] = {}
+    queue_values: dict[str, list[tuple[str, float]]] = {}
 
     sys_sel = service.system_selector if service else ""
     api_sel = service.api_selector if service else ""
@@ -98,9 +101,20 @@ async def collect(
             )
             endpoint_values[query.name] = result or []
 
+    # RabbitMQ queue depth — only when the service has queues configured
+    if service and service.rabbitmq_queues:
+        for query in build_queue_queries(service.rabbitmq_queues):
+            log.info("Collecting [%s] queue: %s", service.display_name, query.name)
+            result = await gateway.fetch(
+                name=query.name,
+                coro_fn=lambda q=query: vm_client.query_vector(q.promql, id_label="queue"),
+            )
+            queue_values[query.name] = result or []
+
     return MetricsReport(
         values=values,
         server_values=server_values,
         endpoint_values=endpoint_values,
+        queue_values=queue_values,
         failures=list(gateway.failures),
     )

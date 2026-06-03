@@ -227,3 +227,30 @@ def build_per_endpoint_queries(
             per_server=True,
         ),
     ]
+
+
+# ── RabbitMQ Queue Depth — instant gauge per queue ────────────────────────────
+
+def build_queue_queries(queues: list[str]) -> list[Query]:
+    """Return ready/unacked/total instant gauge queries for the given queue names."""
+    sel = "|".join(queues)
+    return [
+        Query(
+            name="queue_ready",
+            promql=f'rabbitmq_queue_messages_ready{{queue=~"{sel}"}}',
+            unit="count",
+            per_server=True,
+        ),
+        Query(
+            name="queue_unacked",
+            promql=f'rabbitmq_queue_messages_unacked{{queue=~"{sel}"}}',
+            unit="count",
+            per_server=True,
+        ),
+        Query(
+            name="queue_total",
+            promql=f'rabbitmq_queue_messages{{queue=~"{sel}"}}',
+            unit="count",
+            per_server=True,
+        ),
+    ]

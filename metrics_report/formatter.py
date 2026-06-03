@@ -12,7 +12,7 @@ from .collector import MetricsReport
 from .config import settings
 from .models import (
     ApiMetrics, Endpoint, FlaggingThresholds, L0Report,
-    Server, ServerMetrics, Status, SystemHealth,
+    QueueDepth, QueueHealth, Server, ServerMetrics, Status, SystemHealth,
 )
 from .renderer import render
 
@@ -145,6 +145,24 @@ def to_l0_report(report: MetricsReport, service_name: str = "All Services") -> L
         for ep in active_ep
     ]
 
+    # Queue health (only present when the service has RabbitMQ queues configured)
+    queue_health: Optional[QueueHealth] = None
+    if report.queue_values:
+        ready_map   = dict(report.queue_values.get("queue_ready",   []))
+        unacked_map = dict(report.queue_values.get("queue_unacked", []))
+        total_map   = dict(report.queue_values.get("queue_total",   []))
+        all_queues  = sorted(set(ready_map) | set(unacked_map) | set(total_map))
+        if all_queues:
+            queue_health = QueueHealth(queues=[
+                QueueDepth(
+                    name    = q,
+                    ready   = int(ready_map.get(q)   or 0),
+                    unacked = int(unacked_map.get(q) or 0),
+                    total   = int(total_map.get(q)   or 0),
+                )
+                for q in all_queues
+            ])
+
     return L0Report(
         service              = service_name,
         reported_at          = datetime.now(timezone.utc),
@@ -159,6 +177,7 @@ def to_l0_report(report: MetricsReport, service_name: str = "All Services") -> L
         endpoints            = endpoints,
         thresholds           = thresholds,
         total_endpoint_count = len(active_ep),
+        queues               = queue_health,
     )
 
 
