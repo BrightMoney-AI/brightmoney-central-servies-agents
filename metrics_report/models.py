@@ -121,3 +121,4 @@ class L0Report:
     thresholds:           FlaggingThresholds = field(default_factory=FlaggingThresholds)
     total_endpoint_count: int = 0
     queues:               Optional[QueueHealth] = None
+    show_api_metrics:     bool = True

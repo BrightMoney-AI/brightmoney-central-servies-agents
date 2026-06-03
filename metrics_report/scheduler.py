@@ -42,7 +42,7 @@ async def run_report() -> None:
         for service in services:
             log.info("Collecting: %s [group=%s]", service.display_name, service.report_group)
             raw = await collect(vm, gateway, service)
-            l0  = to_l0_report(raw, service_name=service.display_name)
+            l0  = to_l0_report(raw, service_name=service.display_name, show_api_metrics=bool(service.api_job))
             groups[service.report_group].append((service.display_name, l0))
 
             if raw.failures:

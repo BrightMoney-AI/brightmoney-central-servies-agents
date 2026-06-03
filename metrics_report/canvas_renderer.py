@@ -81,6 +81,9 @@ def _render_service(report: L0Report) -> str:
 
     lines.append("")
 
+    if not report.show_api_metrics:
+        return "\n".join(lines)
+
     # ── API Metrics ────────────────────────────────────────────────────────────
     a = report.api
     lines.append("### API Metrics")
