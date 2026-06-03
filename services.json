@@ -1,6 +1,7 @@
 [
   {
     "display_name": "UAA Entity Manager",
+    "report_group": "UAA Services",
     "name_patterns": ["p-uaa-em-.*", "p-uaa-entity-manager.*"],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
@@ -12,7 +13,20 @@
     "api_method": "POST"
   },
   {
+    "display_name": "Core UAA",
+    "report_group": "UAA Services",
+    "name_patterns": ["p-uaa-core.*"],
+    "system_job": "system_metrics",
+    "api_job": "platform_statsd_metrics",
+    "api_name_patterns": ["p.*-uaa-core-.*"],
+    "api_exclude_endpoints": ["/ping/"],
+    "api_method": "POST",
+    "api_request_metric": "django_http_requests_before_middlewares_total",
+    "api_response_metric": "django_http_responses_before_middlewares_total"
+  },
+  {
     "display_name": "Transaction Insight",
+    "report_group": "UAA Services",
     "name_patterns": ["p-uaa-transaction-insight-.*", "p-uaa-ti-celery.*", "p-transaction-insight-.*"],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
@@ -21,6 +35,7 @@
   },
   {
     "display_name": "UAA Routing",
+    "report_group": "UAA Services",
     "name_patterns": ["p-uaa-routing-app-server.*"],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
@@ -29,27 +44,8 @@
     "api_method": "POST"
   },
   {
-    "display_name": "UAA Metadata",
-    "name_patterns": ["p.*-uaa-metadata-.*"],
-    "system_job": "system_metrics",
-    "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p.*-uaa-metadata-.*"],
-    "api_exclude_endpoints": ["/ping/"],
-    "api_method": "POST"
-  },
-  {
-    "display_name": "UAA CapOne",
-    "name_patterns": ["p-uaa-capone-.*"],
-    "system_job": "system_metrics",
-    "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p.*-uaa-capone-app-.*"],
-    "api_exclude_endpoints": ["/ping/"],
-    "api_method": "POST",
-    "api_request_metric": "django_http_responses_total_by_status",
-    "api_response_metric": "django_http_responses_before_middlewares_total"
-  },
-  {
     "display_name": "UAA Plaid",
+    "report_group": "UAA Services",
     "name_patterns": ["p-uaa-plaid-.*"],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
@@ -60,24 +56,37 @@
     "api_response_metric": "django_http_responses_before_middlewares_total"
   },
   {
+    "display_name": "UAA CapOne",
+    "report_group": "UAA Services",
+    "name_patterns": ["p-uaa-capone-.*"],
+    "system_job": "system_metrics",
+    "api_job": "platform_statsd_metrics",
+    "api_name_patterns": ["p.*-uaa-capone-app-.*"],
+    "api_exclude_endpoints": ["/ping/"],
+    "api_method": "POST",
+    "api_request_metric": "django_http_responses_total_by_status",
+    "api_response_metric": "django_http_responses_before_middlewares_total"
+  },
+  {
+    "display_name": "UAA Metadata",
+    "report_group": "UAA Services",
+    "name_patterns": ["p.*-uaa-metadata-.*"],
+    "system_job": "system_metrics",
+    "api_job": "platform_statsd_metrics",
+    "api_name_patterns": ["p.*-uaa-metadata-.*"],
+    "api_exclude_endpoints": ["/ping/"],
+    "api_method": "POST"
+  },
+  {
     "display_name": "KYC",
+    "report_group": "UAA Services",
     "name_patterns": ["p.*-kyc-app-.*"],
     "system_job": "system_metrics"
   },
   {
     "display_name": "UCB Core",
+    "report_group": "UAA Services",
     "name_patterns": ["p-ucb-core-.*", "p-ucb-gateway-api-.*"],
     "system_job": "system_metrics"
-  },
-  {
-    "display_name": "Core UAA",
-    "name_patterns": ["p-uaa-core.*"],
-    "system_job": "system_metrics",
-    "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p.*-uaa-core-.*"],
-    "api_exclude_endpoints": ["/ping/"],
-    "api_method": "POST",
-    "api_request_metric": "django_http_requests_before_middlewares_total",
-    "api_response_metric": "django_http_responses_before_middlewares_total"
   }
 ]

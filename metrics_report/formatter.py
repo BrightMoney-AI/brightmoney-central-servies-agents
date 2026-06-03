@@ -4,6 +4,7 @@ ReportFormatter — converts MetricsReport into a Slack Block Kit payload.
 Builds an L0Report from the raw MetricsReport, then delegates to renderer.render().
 The public API (build_slack_payload) is unchanged — scheduler.py is unaffected.
 """
+from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
