@@ -123,8 +123,24 @@ class AirflowDagRun:
 
 
 @dataclass
+class ViewFlowRun:
+    table_name: str
+    state: str
+    start_date: Optional[datetime]
+
+
+@dataclass
+class ViewFlowHealth:
+    total: int
+    successful: int
+    failed: list[ViewFlowRun]
+    running: list[ViewFlowRun]
+
+
+@dataclass
 class AirflowHealth:
     dag_runs: list[AirflowDagRun]
+    view_flow: Optional[ViewFlowHealth] = None
 
 
 @dataclass

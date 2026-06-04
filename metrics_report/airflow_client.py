@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import httpx
 import sqlalchemy
 from sqlalchemy import text
 
-from .models import AirflowDagRun, AirflowHealth
+from .models import AirflowDagRun, AirflowHealth, ViewFlowHealth, ViewFlowRun
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +57,68 @@ def _fetch_sync(db_url: str) -> AirflowHealth:
     ]
     log.info("Airflow: fetched %d dp_* DAG run(s).", len(dag_runs))
     return AirflowHealth(dag_runs=dag_runs)
+
+
+_VIEW_FLOW_DAG = "dp_cosmos_execute_view_flow"
+
+
+async def fetch_view_flow_health(
+    base_url: str,
+    username: str,
+    password: str,
+    lookback_hours: int = 24,
+) -> Optional[ViewFlowHealth]:
+    """Fetch last 24h runs of dp_cosmos_execute_view_flow via Airflow REST API."""
+    if not base_url:
+        return None
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+    cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+    url = f"{base_url.rstrip('/')}/api/v1/dags/{_VIEW_FLOW_DAG}/dagRuns"
+    params = {
+        "limit": 500,
+        "order_by": "-start_date",
+        "start_date_gte": cutoff_str,
+    }
+
+    try:
+        async with httpx.AsyncClient(auth=(username, password), timeout=15.0) as client:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as exc:
+        log.error("Failed to fetch view flow DAG runs: %s", exc)
+        return None
+
+    runs = data.get("dag_runs", [])
+    total = len(runs)
+    successful = 0
+    failed: list[ViewFlowRun] = []
+    running: list[ViewFlowRun] = []
+
+    for r in runs:
+        conf = r.get("conf") or {}
+        table_name = (
+            conf.get("base_table_name")
+            or conf.get("table_name")
+            or conf.get("dataset_name")
+            or r.get("dag_run_id", "unknown")
+        )
+        state = r.get("state", "unknown")
+        raw_dt = r.get("start_date")
+        start_dt = datetime.fromisoformat(raw_dt.replace("Z", "+00:00")) if raw_dt else None
+
+        vr = ViewFlowRun(table_name=table_name, state=state, start_date=start_dt)
+        if state == "success":
+            successful += 1
+        elif state == "failed":
+            failed.append(vr)
+        elif state == "running":
+            running.append(vr)
+
+    log.info("ViewFlow: %d runs in last %dh — %d success, %d failed, %d running.",
+             total, lookback_hours, successful, len(failed), len(running))
+    return ViewFlowHealth(total=total, successful=successful, failed=failed, running=running)
 
 
 async def fetch_airflow_health(db_url: str) -> Optional[AirflowHealth]:

@@ -18,7 +18,8 @@ from .config import settings
 from .collector import collect
 from .formatter import to_l0_report
 from .gateway import MetricsGateway
-from .airflow_client import fetch_airflow_health
+from .airflow_client import fetch_airflow_health, fetch_view_flow_health
+from .models import AirflowHealth
 from .kafka_connect import fetch_all_connector_health
 from .models import Status
 from .services import load_services
@@ -64,15 +65,21 @@ async def run_report() -> None:
     ts_ist   = datetime.now(IST)
     date_str = ts_ist.strftime("%d %b %Y")
 
-    # Fetch Data Platform extras (connector health + Airflow DAG runs) concurrently
-    connector_health, airflow_health = await asyncio.gather(
+    # Fetch Data Platform extras concurrently
+    connector_result, db_result, view_flow_result = await asyncio.gather(
         fetch_all_connector_health(settings.kafka_connect_instances) if settings.kafka_connect_instances else asyncio.sleep(0),
         fetch_airflow_health(settings.airflow_db_url),
+        fetch_view_flow_health(settings.airflow_api_url, settings.airflow_api_username, settings.airflow_api_password),
+    )
+    connector_health = connector_result if connector_result else None
+    airflow_health = AirflowHealth(
+        dag_runs=db_result.dag_runs if db_result else [],
+        view_flow=view_flow_result,
     )
     if connector_health:
         log.info("Connector health fetched: %d instance(s).", len(connector_health.instances))
-    if airflow_health:
-        log.info("Airflow health fetched: %d DAG run(s).", len(airflow_health.dag_runs))
+    log.info("Airflow health fetched: %d DAG run(s), view_flow=%s.",
+             len(airflow_health.dag_runs), "yes" if view_flow_result else "no")
 
     # Post canvases in canonical order, then any unrecognised groups last
     ordered_keys = [g for g in _GROUP_ORDER if g in groups]

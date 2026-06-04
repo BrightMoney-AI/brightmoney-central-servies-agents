@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # Airflow metadata DB (empty = disabled)
     airflow_db_url: str = ""
 
+    # Airflow REST API (empty = disabled)
+    airflow_api_url: str = ""
+    airflow_api_username: str = ""
+    airflow_api_password: str = ""
+
     # Kafka Connect REST API base URLs (empty = disabled)
     kafka_connect_kafka_sink_url: str = ""
     kafka_connect_cdc_sink_url: str = ""
