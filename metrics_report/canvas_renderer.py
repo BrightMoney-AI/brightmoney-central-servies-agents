@@ -215,42 +215,54 @@ def _render_connector_section(connector_health: KafkaConnectHealth) -> str:
 
 
 def _render_airflow_section(airflow_health: AirflowHealth) -> str:
-    """Render a ## Airflow DAGs section showing failed/non-success DAGs."""
-    if not airflow_health.dag_runs:
+    """Render a ## Airflow DAGs section with DB-based DAG status and 24h view flow summary."""
+    if not airflow_health.dag_runs and not airflow_health.view_flow:
         return ""
-
-    total      = len(airflow_health.dag_runs)
-    successful = sum(1 for d in airflow_health.dag_runs if d.state == "success")
-    unhealthy  = [d for d in airflow_health.dag_runs if d.state != "success"]
 
     lines: list[str] = ["## Airflow DAGs", ""]
 
-    if not unhealthy:
-        lines.append(f"✅ All {total} DAGs succeeded")
+    # ── DAG status from DB (dp_cosmos_flag_debezium_invalid_tables) ───────────
+    if airflow_health.dag_runs:
+        lines.append("| DAG | State | Last run |")
+        lines.append("|---|---|---|")
+        for d in sorted(airflow_health.dag_runs, key=lambda x: x.dag_id):
+            if d.state == "success":
+                state_emoji = "🟢"
+            elif d.state == "failed":
+                state_emoji = "🔴"
+            elif d.state == "running":
+                state_emoji = "🔵"
+            else:
+                state_emoji = "⚪"
+            started = d.start_date.strftime("%d %b %H:%M IST") if d.start_date else "—"
+            lines.append(f"| `{d.dag_id}` | {state_emoji} {d.state} | {started} |")
         lines.append("")
-        return "\n".join(lines)
 
-    n_failed  = sum(1 for d in unhealthy if d.state == "failed")
-    n_running = sum(1 for d in unhealthy if d.state == "running")
-    n_other   = len(unhealthy) - n_failed - n_running
+    # ── View flow 24h summary (dp_cosmos_execute_view_flow) ───────────────────
+    vf = airflow_health.view_flow
+    if vf:
+        lines.append("### dp_cosmos_execute_view_flow · last 24h")
+        lines.append("")
+        n_other = vf.total - vf.successful - len(vf.failed) - len(vf.running)
+        parts = [f"{vf.total} runs", f"🟢 {vf.successful} success"]
+        if vf.failed:
+            parts.append(f"🔴 {len(vf.failed)} failed")
+        if vf.running:
+            parts.append(f"🔵 {len(vf.running)} running")
+        if n_other > 0:
+            parts.append(f"⚪ {n_other} other")
+        lines.append("  ·  ".join(parts))
+        lines.append("")
 
-    parts = [f"{total} DAGs", f"🟢 {successful} success"]
-    if n_failed:
-        parts.append(f"🔴 {n_failed} failed")
-    if n_running:
-        parts.append(f"🔵 {n_running} running")
-    if n_other:
-        parts.append(f"⚪ {n_other} other")
-    lines.append("  ·  ".join(parts))
-    lines.append("")
-
-    lines.append("| DAG | State | Last run |")
-    lines.append("|---|---|---|")
-    for d in sorted(unhealthy, key=lambda x: x.dag_id):
-        state_emoji = "🔴" if d.state == "failed" else ("🔵" if d.state == "running" else "⚪")
-        started = d.start_date.strftime("%d %b %H:%M IST") if d.start_date else "—"
-        lines.append(f"| `{d.dag_id}` | {state_emoji} {d.state} | {started} |")
-    lines.append("")
+        if vf.failed:
+            lines.append("**Failed table refreshes:**")
+            lines.append("")
+            lines.append("| Table | Started |")
+            lines.append("|---|---|")
+            for r in sorted(vf.failed, key=lambda x: x.table_name):
+                started = r.start_date.strftime("%d %b %H:%M IST") if r.start_date else "—"
+                lines.append(f"| `{r.table_name}` | {started} |")
+            lines.append("")
 
     return "\n".join(lines)
 
