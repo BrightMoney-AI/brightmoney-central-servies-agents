@@ -123,7 +123,7 @@ def _render_service(report: L0Report) -> str:
     )
 
     if flagged:
-        lines.append(f"**⚠️ Flagged ({len(flagged)}) — errors · low success · slow p99**")
+        lines.append(f"**⚠️ Flagged ({len(flagged)}) — success drop · latency spike vs 7d baseline**")
         lines.append("")
         for ep in flagged:
             reasons   = _flag_reasons(ep, t)

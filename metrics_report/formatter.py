@@ -147,12 +147,17 @@ def to_l0_report(report: MetricsReport, service_name: str = "All Services", show
     ]
     ep_p99_baseline_map     = dict(ev.get("endpoint_p99_latency_baseline_ms", []))
     ep_success_baseline_map = dict(ev.get("endpoint_success_baseline_pct",    []))
+
+    # Only endpoints with enough traffic are statistically reliable enough to affect service status
+    _MIN_HITS = 100
+    status_ep = [ep for ep in active_ep if (ep_hits_map.get(ep) or 0) >= _MIN_HITS]
+
     ep_icons = [
         _success_drop_icon(ep_success_map.get(ep), ep_success_baseline_map.get(ep))
-        for ep in active_ep
+        for ep in status_ep
     ] + [
         _latency_spike_icon(ep_p99_map.get(ep), ep_p99_baseline_map.get(ep))
-        for ep in active_ep
+        for ep in status_ep
     ]
 
     # Services without API metrics (show_api_metrics=False) should only be judged on server health

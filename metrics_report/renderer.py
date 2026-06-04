@@ -23,8 +23,6 @@ def _metric_status(value: float, thresholds: FlaggingThresholds) -> Status:
 
 
 def _endpoint_is_flagged(ep: Endpoint, t: FlaggingThresholds) -> bool:
-    if ep.errors is not None and ep.errors > 0:
-        return True
     # Success rate: flag only if it's a spike down vs baseline, not if it's always been low
     if ep.success_baseline_pct is not None:
         if ep.success_baseline_pct - ep.success_pct >= 5.0:
