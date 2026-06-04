@@ -90,11 +90,17 @@ def _render_service(report: L0Report) -> str:
     lines.append("")
     lines.append("| Throughput | Success rate | Error rate | Avg latency (p50) |")
     lines.append("|---|---|---|---|")
+    lat_str = f"{a.avg_latency_p50_ms} ms"
+    if a.avg_latency_baseline_ms and a.avg_latency_baseline_ms > 0:
+        _r = a.avg_latency_p50_ms / a.avg_latency_baseline_ms
+        _pct = (_r - 1) * 100
+        _te = "🔴" if _r >= 2.0 else ("🟡" if _r >= 1.5 else "🟢")
+        lat_str += f" ({_pct:+.0f}% {_te} vs 7d)"
     lines.append(
         f"| {a.throughput_rps:.1f} rps "
         f"| {_fmt_pct(a.success_rate_pct)} "
         f"| {_fmt_pct(a.error_rate_pct)} "
-        f"| {a.avg_latency_p50_ms} ms |"
+        f"| {lat_str} |"
     )
     lines.append("")
 
@@ -117,20 +123,33 @@ def _render_service(report: L0Report) -> str:
     )
 
     if flagged:
-        lines.append(f"**⚠️ Flagged ({len(flagged)}) — errors · low success · slow p99**")
+        lines.append(f"**⚠️ Flagged ({len(flagged)}) — success drop · latency spike vs 7d baseline**")
         lines.append("")
         for ep in flagged:
             reasons   = _flag_reasons(ep, t)
-            suc_emoji = "🔴" if ep.success_pct < 80 else ("🟡" if ep.success_pct < t.success_warn_pct else "🟢")
-            p99_emoji = "🔴" if ep.p99_ms >= t.p99_crit_ms else ("🟡" if ep.p99_ms >= t.p99_warn_ms else "🟢")
+            if ep.success_baseline_pct is not None:
+                _drop = ep.success_baseline_pct - ep.success_pct
+                suc_emoji = "🔴" if _drop >= 10.0 else ("🟡" if _drop >= 5.0 else "🟢")
+            else:
+                suc_emoji = "🔴" if ep.success_pct < 80 else ("🟡" if ep.success_pct < t.success_warn_pct else "🟢")
+            if ep.p99_baseline_ms and ep.p99_baseline_ms > 0:
+                _r = ep.p99_ms / ep.p99_baseline_ms
+                p99_emoji = "🔴" if _r >= 2.0 else ("🟡" if _r >= 1.5 else "🟢")
+            else:
+                p99_emoji = "🔴" if ep.p99_ms >= t.p99_crit_ms else ("🟡" if ep.p99_ms >= t.p99_warn_ms else "🟢")
             err_str   = "N/A" if ep.errors is None else str(ep.errors)
 
+            p99_str = _fmt_p99(ep.p99_ms)
+            if ep.p99_baseline_ms and ep.p99_baseline_ms > 0:
+                _r = ep.p99_ms / ep.p99_baseline_ms
+                _pct = (_r - 1) * 100
+                p99_str += f" ({_pct:+.0f}% vs 7d)"
             lines.append(f"**`{ep.path}`**")
             lines.append(
                 f"{_fmt_hits(ep.hits)} hits · "
                 f"{suc_emoji} {_fmt_pct(ep.success_pct)} · "
                 f"{err_str} errors · "
-                f"{p99_emoji} {_fmt_p99(ep.p99_ms)} p99"
+                f"{p99_emoji} {p99_str} p99"
             )
             lines.append(f"_{', '.join(reasons)}_")
             lines.append("")
@@ -143,12 +162,18 @@ def _render_service(report: L0Report) -> str:
         lines.append("")
         for ep in top_n:
             err_str = "N/A" if ep.errors is None else str(ep.errors)
+            p99_str = _fmt_p99(ep.p99_ms)
+            if ep.p99_baseline_ms and ep.p99_baseline_ms > 0:
+                _r = ep.p99_ms / ep.p99_baseline_ms
+                _pct = (_r - 1) * 100
+                _te = "🔴" if _r >= 2.0 else ("🟡" if _r >= 1.5 else "🟢")
+                p99_str += f" ({_pct:+.0f}% {_te})"
             lines.append(
                 f"- `{ep.path}` · "
                 f"{_fmt_hits(ep.hits)} · "
                 f"{_fmt_pct(ep.success_pct)} · "
                 f"{err_str} errors · "
-                f"{_fmt_p99(ep.p99_ms)} p99"
+                f"{p99_str} p99"
             )
         lines.append("")
 

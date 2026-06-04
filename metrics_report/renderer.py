@@ -23,11 +23,17 @@ def _metric_status(value: float, thresholds: FlaggingThresholds) -> Status:
 
 
 def _endpoint_is_flagged(ep: Endpoint, t: FlaggingThresholds) -> bool:
-    if ep.errors is not None and ep.errors > 0:
+    # Success rate: flag only if it's a spike down vs baseline, not if it's always been low
+    if ep.success_baseline_pct is not None:
+        if ep.success_baseline_pct - ep.success_pct >= 5.0:
+            return True
+    elif ep.success_pct < t.success_warn_pct:
         return True
-    if ep.success_pct < t.success_warn_pct:
-        return True
-    if ep.p99_ms >= t.p99_warn_ms:
+    # p99 latency: flag only if it's a spike vs baseline
+    if ep.p99_baseline_ms and ep.p99_baseline_ms > 0:
+        if ep.p99_ms / ep.p99_baseline_ms >= 1.5:
+            return True
+    elif ep.p99_ms >= t.p99_warn_ms:
         return True
     return False
 
@@ -91,14 +97,28 @@ def _worst_status(*statuses: Status) -> Status:
 
 def _flag_reasons(ep: Endpoint, t: FlaggingThresholds) -> list[str]:
     reasons = []
-    if ep.p99_ms >= t.p99_crit_ms:
-        reasons.append("critical p99")
-    elif ep.p99_ms >= t.p99_warn_ms:
-        reasons.append("slow p99")
-    if ep.success_pct < 80:
-        reasons.append("critical success rate")
-    elif ep.success_pct < t.success_warn_pct:
-        reasons.append("low success rate")
+    if ep.p99_baseline_ms and ep.p99_baseline_ms > 0:
+        ratio = ep.p99_ms / ep.p99_baseline_ms
+        if ratio >= 2.0:
+            reasons.append(f"p99 spike {ratio:.1f}× baseline")
+        elif ratio >= 1.5:
+            reasons.append(f"p99 elevated {ratio:.1f}× baseline")
+    else:
+        if ep.p99_ms >= t.p99_crit_ms:
+            reasons.append("critical p99")
+        elif ep.p99_ms >= t.p99_warn_ms:
+            reasons.append("slow p99")
+    if ep.success_baseline_pct is not None:
+        drop = ep.success_baseline_pct - ep.success_pct
+        if drop >= 10.0:
+            reasons.append(f"success dropped {drop:.0f}pp vs baseline")
+        elif drop >= 5.0:
+            reasons.append(f"success down {drop:.0f}pp vs baseline")
+    else:
+        if ep.success_pct < 80:
+            reasons.append("critical success rate")
+        elif ep.success_pct < t.success_warn_pct:
+            reasons.append("low success rate")
     if ep.errors is not None and ep.errors > 0:
         reasons.append("errors")
     return reasons
@@ -257,17 +277,25 @@ def _block_endpoints(report: L0Report) -> list[dict]:
                 blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": compact}]})
                 break
 
-            reasons   = _flag_reasons(ep, t)
-            suc_emoji = (
-                ":red_circle:"    if ep.success_pct < 80
-                else ":yellow_circle:" if ep.success_pct < t.success_warn_pct
-                else ":green_circle:"
-            )
-            p99_emoji = (
-                ":red_circle:"    if ep.p99_ms >= t.p99_crit_ms
-                else ":yellow_circle:" if ep.p99_ms >= t.p99_warn_ms
-                else ":green_circle:"
-            )
+            reasons = _flag_reasons(ep, t)
+            if ep.success_baseline_pct is not None:
+                _drop = ep.success_baseline_pct - ep.success_pct
+                suc_emoji = ":red_circle:" if _drop >= 10.0 else (":yellow_circle:" if _drop >= 5.0 else ":green_circle:")
+            else:
+                suc_emoji = (
+                    ":red_circle:"    if ep.success_pct < 80
+                    else ":yellow_circle:" if ep.success_pct < t.success_warn_pct
+                    else ":green_circle:"
+                )
+            if ep.p99_baseline_ms and ep.p99_baseline_ms > 0:
+                _r = ep.p99_ms / ep.p99_baseline_ms
+                p99_emoji = ":red_circle:" if _r >= 2.0 else (":yellow_circle:" if _r >= 1.5 else ":green_circle:")
+            else:
+                p99_emoji = (
+                    ":red_circle:"    if ep.p99_ms >= t.p99_crit_ms
+                    else ":yellow_circle:" if ep.p99_ms >= t.p99_warn_ms
+                    else ":green_circle:"
+                )
             errors_str = "N/A" if ep.errors is None else str(ep.errors)
             blocks.append({
                 "type": "section",

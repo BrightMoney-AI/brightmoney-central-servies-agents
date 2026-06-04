@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     cpu_crit_pct: float = 90.0
     mem_warn_pct: float = 75.0
     mem_crit_pct: float = 90.0
-    disk_warn_pct: float = 75.0
+    disk_warn_pct: float = 80.0
     disk_crit_pct: float = 90.0
     error_rate_warn_pct: float = 1.0
     error_rate_crit_pct: float = 5.0
