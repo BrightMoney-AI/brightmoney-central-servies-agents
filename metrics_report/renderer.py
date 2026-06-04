@@ -27,7 +27,10 @@ def _endpoint_is_flagged(ep: Endpoint, t: FlaggingThresholds) -> bool:
         return True
     if ep.success_pct < t.success_warn_pct:
         return True
-    if ep.p99_ms >= t.p99_warn_ms:
+    if ep.p99_baseline_ms and ep.p99_baseline_ms > 0:
+        if ep.p99_ms / ep.p99_baseline_ms >= 1.5:
+            return True
+    elif ep.p99_ms >= t.p99_warn_ms:
         return True
     return False
 
@@ -91,10 +94,17 @@ def _worst_status(*statuses: Status) -> Status:
 
 def _flag_reasons(ep: Endpoint, t: FlaggingThresholds) -> list[str]:
     reasons = []
-    if ep.p99_ms >= t.p99_crit_ms:
-        reasons.append("critical p99")
-    elif ep.p99_ms >= t.p99_warn_ms:
-        reasons.append("slow p99")
+    if ep.p99_baseline_ms and ep.p99_baseline_ms > 0:
+        ratio = ep.p99_ms / ep.p99_baseline_ms
+        if ratio >= 2.0:
+            reasons.append(f"p99 spike {ratio:.1f}× baseline")
+        elif ratio >= 1.5:
+            reasons.append(f"p99 elevated {ratio:.1f}× baseline")
+    else:
+        if ep.p99_ms >= t.p99_crit_ms:
+            reasons.append("critical p99")
+        elif ep.p99_ms >= t.p99_warn_ms:
+            reasons.append("slow p99")
     if ep.success_pct < 80:
         reasons.append("critical success rate")
     elif ep.success_pct < t.success_warn_pct:
@@ -263,11 +273,15 @@ def _block_endpoints(report: L0Report) -> list[dict]:
                 else ":yellow_circle:" if ep.success_pct < t.success_warn_pct
                 else ":green_circle:"
             )
-            p99_emoji = (
-                ":red_circle:"    if ep.p99_ms >= t.p99_crit_ms
-                else ":yellow_circle:" if ep.p99_ms >= t.p99_warn_ms
-                else ":green_circle:"
-            )
+            if ep.p99_baseline_ms and ep.p99_baseline_ms > 0:
+                _r = ep.p99_ms / ep.p99_baseline_ms
+                p99_emoji = ":red_circle:" if _r >= 2.0 else (":yellow_circle:" if _r >= 1.5 else ":green_circle:")
+            else:
+                p99_emoji = (
+                    ":red_circle:"    if ep.p99_ms >= t.p99_crit_ms
+                    else ":yellow_circle:" if ep.p99_ms >= t.p99_warn_ms
+                    else ":green_circle:"
+                )
             errors_str = "N/A" if ep.errors is None else str(ep.errors)
             blocks.append({
                 "type": "section",

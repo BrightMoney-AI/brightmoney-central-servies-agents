@@ -53,19 +53,21 @@ class SystemHealth:
 
 @dataclass
 class ApiMetrics:
-    throughput_rps:     float
-    success_rate_pct:   float
-    error_rate_pct:     float
-    avg_latency_p50_ms: int
+    throughput_rps:          float
+    success_rate_pct:        float
+    error_rate_pct:          float
+    avg_latency_p50_ms:      int
+    avg_latency_baseline_ms: Optional[float] = None  # 7-day baseline for trend comparison
 
 
 @dataclass
 class Endpoint:
-    path:        str
-    hits:        int
-    success_pct: float
-    errors:      Optional[int]  # None = no data (N/A)
-    p99_ms:      float
+    path:            str
+    hits:            int
+    success_pct:     float
+    errors:          Optional[int]   # None = no data (N/A)
+    p99_ms:          float
+    p99_baseline_ms: Optional[float] = None  # 7-day baseline for trend comparison
 
 
 @dataclass

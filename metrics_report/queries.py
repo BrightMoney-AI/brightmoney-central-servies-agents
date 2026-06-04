@@ -153,6 +153,12 @@ def build_api_queries(
             promql=f"avg(avg_over_time(django_request_latency_seconds{s_p50}[{window}])) * 1000",
             unit="ms",
         ),
+        # 7-day baseline ending 24h ago — used to detect latency spikes vs normal operating range
+        Query(
+            name="api_avg_latency_baseline_ms",
+            promql=f"avg(avg_over_time(django_request_latency_seconds{s_p50}[7d] offset 24h)) * 1000",
+            unit="ms",
+        ),
     ]
 
 
@@ -223,6 +229,13 @@ def build_per_endpoint_queries(
         Query(
             name="endpoint_p99_latency_ms",
             promql=f"avg by (endpoint) (avg_over_time(django_request_latency_seconds{s_latency}[{window}])) * 1000",
+            unit="ms",
+            per_server=True,
+        ),
+        # 7-day baseline per endpoint — used to detect latency spikes vs normal operating range
+        Query(
+            name="endpoint_p99_latency_baseline_ms",
+            promql=f"avg by (endpoint) (avg_over_time(django_request_latency_seconds{s_latency}[7d] offset 24h)) * 1000",
             unit="ms",
             per_server=True,
         ),
