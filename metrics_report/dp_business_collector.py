@@ -76,7 +76,7 @@ final_data AS (
 )
 SELECT f.tbl_name
 FROM final_data AS f
-INNER JOIN iceberg_db.cosmos_db__public__dataset_dataset AS d ON d.name = f.tbl_name AND d.is_active = TRUE
+INNER JOIN iceberg_db.cosmos_db__public__dataset_dataset__current_view_presto AS d ON d.name = f.tbl_name AND d.is_active = TRUE
 WHERE f.trx_ts IS NULL OR CAST(f.trx_ts AS TIMESTAMP) < (CURRENT_TIMESTAMP - INTERVAL '3' HOUR)
 ORDER BY f.tbl_name
 """
@@ -122,7 +122,7 @@ ORDER BY 2 DESC
 _TRINO_OFFSET_VALIDATION = """
 WITH dataset AS (
     SELECT d.name AS tbl_name, d.id AS dataset_id
-    FROM iceberg_db.cosmos_db__public__dataset_dataset d
+    FROM iceberg_db.cosmos_db__public__dataset_dataset__current_view_presto d
     WHERE d.is_active = TRUE AND d.type IN ('cdc', 'kafka')
 ),
 validated_data AS (
@@ -193,9 +193,9 @@ ORDER BY 1
 
 _TRINO_VIEW_STALE = """
 SELECT d.name
-FROM iceberg_db.cosmos_db__public__dataset_dataset d
-JOIN iceberg_db.cosmos_db__public__features_hivesummary h ON h.dataset_id = d.id
-JOIN iceberg_db.cosmos_db__public__features_mirrortable m ON m.cdc_dataset_id = d.id
+FROM iceberg_db.cosmos_db__public__dataset_dataset__current_view_presto d
+JOIN iceberg_db.cosmos_db__public__features_hivesummary__current_view_presto h ON h.dataset_id = d.id
+JOIN iceberg_db.cosmos_db__public__features_mirrortable__current_view_presto m ON m.cdc_dataset_id = d.id
 WHERE d.is_active = TRUE AND m.is_active = TRUE
   AND h.presto_view_updated_till < (CURRENT_TIMESTAMP - INTERVAL '60' DAY)
   AND h.hive_view_updated_till   < (CURRENT_TIMESTAMP - INTERVAL '60' DAY)
@@ -204,8 +204,8 @@ WHERE d.is_active = TRUE AND m.is_active = TRUE
 
 _TRINO_DBZ_INVALID = """
 SELECT d.name
-FROM iceberg_db.cosmos_db__public__dataset_dataset d
-JOIN iceberg_db.cosmos_db__public__dataset_datasetbaserefresh dr ON dr.dataset_id = d.id
+FROM iceberg_db.cosmos_db__public__dataset_dataset__current_view_presto d
+JOIN iceberg_db.cosmos_db__public__dataset_datasetbaserefresh__current_view_presto dr ON dr.dataset_id = d.id
 WHERE d.is_active = TRUE
   AND dr.last_base_updated        < (CURRENT_TIMESTAMP - INTERVAL '36' HOUR)
   AND dr.last_debezium_invalid_found > dr.last_base_updated
@@ -213,9 +213,9 @@ WHERE d.is_active = TRUE
 
 _TRINO_FULL_VALIDATION = """
 SELECT d.name
-FROM iceberg_db.cosmos_db__public__features_validation f
-JOIN iceberg_db.cosmos_db__public__features_mirrortable m ON m.id = f.mirror_table_id
-JOIN iceberg_db.cosmos_db__public__dataset_dataset d       ON d.id = m.cdc_dataset_id
+FROM iceberg_db.cosmos_db__public__features_validation__current_view_presto f
+JOIN iceberg_db.cosmos_db__public__features_mirrortable__current_view_presto m ON m.id = f.mirror_table_id
+JOIN iceberg_db.cosmos_db__public__dataset_dataset__current_view_presto d       ON d.id = m.cdc_dataset_id
 WHERE m.is_active = TRUE AND d.is_active = TRUE AND f.is_active = TRUE
   AND (
     (f.last_full_validated_at < (CURRENT_TIMESTAMP - INTERVAL '90' DAY) AND f.last_validated_transaction_ts > (CURRENT_TIMESTAMP - INTERVAL '30' DAY))
@@ -228,8 +228,8 @@ ORDER BY 1
 
 _TRINO_BASE_REFRESH = """
 SELECT d.name
-FROM iceberg_db.cosmos_db__public__dataset_dataset d
-JOIN iceberg_db.cosmos_db__public__features_mirrortable m ON m.cdc_dataset_id = d.id
+FROM iceberg_db.cosmos_db__public__dataset_dataset__current_view_presto d
+JOIN iceberg_db.cosmos_db__public__features_mirrortable__current_view_presto m ON m.cdc_dataset_id = d.id
 WHERE m.is_active = TRUE AND d.is_active = TRUE
   AND (m.last_base_refresh_success < (CURRENT_TIMESTAMP - INTERVAL '60' DAY) OR m.last_run_trx_ts IS NULL)
 """
@@ -237,14 +237,14 @@ WHERE m.is_active = TRUE AND d.is_active = TRUE
 _TRINO_VALIDATION_STALE = """
 WITH latest_run AS (
     SELECT run_version
-    FROM iceberg_db.cosmos_db__public__cdc_table_validation_stats
+    FROM iceberg_db.cosmos_db__public__cdc_table_validation_stats__current_view_presto
     ORDER BY id DESC LIMIT 1
 )
 SELECT DISTINCT d.name
-FROM iceberg_db.cosmos_db__public__dataset_dataset d
-LEFT JOIN iceberg_db.cosmos_db__public__cdc_table_validation_stats_last_passed s
+FROM iceberg_db.cosmos_db__public__dataset_dataset__current_view_presto d
+LEFT JOIN iceberg_db.cosmos_db__public__cdc_table_validation_stats_last_passed__current_view_presto s
     ON s.dataset_id = d.id
-LEFT JOIN iceberg_db.cosmos_db__public__cdc_table_validation_stats st
+LEFT JOIN iceberg_db.cosmos_db__public__cdc_table_validation_stats__current_view_presto st
     ON st.dataset_id = d.id AND st.run_version = (SELECT run_version FROM latest_run)
 WHERE d.type IN ('cdc', 'kafka') AND d.is_active = TRUE
   AND (s.created_at IS NULL OR s.created_at < (CURRENT_TIMESTAMP - INTERVAL '24' HOUR))
