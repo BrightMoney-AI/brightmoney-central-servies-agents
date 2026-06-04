@@ -34,8 +34,11 @@ log = logging.getLogger(__name__)
 _GROUP_ORDER = ["UAA Services", "Central Services", "Data Platform"]
 
 
-async def run_report() -> None:
+async def run_report(group: str | None = None) -> None:
     services = load_services()
+    if group:
+        services = [s for s in services if s.report_group == group]
+        log.info("Filtered to group=%r: %d service(s).", group, len(services))
     log.info("Starting L0 metrics report for %d service(s)...", len(services))
 
     gateway = MetricsGateway(timeout_secs=settings.gateway_timeout_secs)
@@ -164,11 +167,12 @@ def _summary_blocks(collected: list[tuple[str, object]], group_name: str = "L0 D
     return blocks
 
 
-def create_scheduler() -> AsyncIOScheduler:
+def create_scheduler(group: str | None = None) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
     # 10:00 IST = 04:30 UTC
     scheduler.add_job(
         run_report,
+        kwargs={"group": group},
         trigger=CronTrigger(hour=4, minute=30, timezone="UTC"),
         id="l0_daily_report",
         name="L0 Daily Metrics Report",

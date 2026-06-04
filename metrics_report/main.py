@@ -13,10 +13,13 @@ Services: ems.json (EMS dashboard) + services.json (general) are merged automati
 
   # Fire a report immediately and exit
   python -m metrics_report.main --now
+
+  # Fire a report for one group only
+  python -m metrics_report.main --now --group "Central Services"
 """
+import argparse
 import asyncio
 import logging
-import sys
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,12 +29,13 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-async def _scheduled() -> None:
+async def _scheduled(group: str | None) -> None:
     from .scheduler import create_scheduler
 
-    scheduler = create_scheduler()
+    scheduler = create_scheduler(group=group)
     scheduler.start()
-    log.info("Scheduler started — L0 report fires daily at 10:00 IST (04:30 UTC). Ctrl-C to stop.")
+    label = f"group={group!r}" if group else "all groups"
+    log.info("Scheduler started — L0 report fires daily at 10:00 IST (04:30 UTC) [%s]. Ctrl-C to stop.", label)
     try:
         while True:
             await asyncio.sleep(3600)
@@ -40,13 +44,19 @@ async def _scheduled() -> None:
         log.info("Scheduler stopped.")
 
 
-async def _now() -> None:
+async def _now(group: str | None) -> None:
     from .scheduler import run_report
-    await run_report()
+    await run_report(group=group)
 
 
 if __name__ == "__main__":
-    if "--now" in sys.argv:
-        asyncio.run(_now())
+    parser = argparse.ArgumentParser(description="L0 metrics report")
+    parser.add_argument("--now", action="store_true", help="Fire report immediately and exit")
+    parser.add_argument("--group", metavar="GROUP", default=None,
+                        help='Limit to one report_group, e.g. "Central Services"')
+    args = parser.parse_args()
+
+    if args.now:
+        asyncio.run(_now(args.group))
     else:
-        asyncio.run(_scheduled())
+        asyncio.run(_scheduled(args.group))

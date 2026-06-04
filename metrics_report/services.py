@@ -97,74 +97,6 @@ class ServiceDef:
         return ", ".join(parts)
 
 
-DEFAULT_SERVICES: list[ServiceDef] = [
-    ServiceDef(
-        display_name="Firestore",
-        name_patterns=["p-firestore-app-.*", "p-firestore-celery-server-.*"],
-        system_job="system_metrics",
-    ),
-    ServiceDef(
-        display_name="Narada",
-        name_patterns=["p-narada-app-.*", "p-narada-worker-.*"],
-        system_job="system_metrics",
-    ),
-    ServiceDef(
-        display_name="Narada Mixpanel",
-        name_patterns=["p-narada-mixpanel-.*"],
-        system_job="system_metrics",
-    ),
-    ServiceDef(
-        display_name="Email Management Service",
-        name_patterns=["p-email-management.*"],
-        system_job="system_metrics",
-    ),
-    ServiceDef(
-        display_name="WMS",
-        name_patterns=["p-wms-app.*"],
-        system_job="system_metrics",
-    ),
-    ServiceDef(
-        display_name="Email Forwarder",
-        name_patterns=["p-narada-email-forwarder-server.*"],
-        system_job="system_metrics",
-    ),
-    ServiceDef(
-        display_name="Clevertap Forwarder",
-        name_patterns=["p-narada-clevertap-app-.*", "p-narada-clevertap-worker-.*"],
-        system_job="system_metrics",
-    ),
-    ServiceDef(
-        display_name="Physical Mail Service",
-        name_patterns=["p-physical-mail-automation.*"],
-        system_job="system_metrics",
-    ),
-    ServiceDef(
-        display_name="Singular Forwarder",
-        name_patterns=["p-narada-singular-worker.*"],
-        system_job="system_metrics",
-    ),
-    ServiceDef(
-        display_name="Facebook Forwarder",
-        name_patterns=["p-narada-facebook-worker.*"],
-        system_job="system_metrics",
-    ),
-    ServiceDef(
-        display_name="Snap Forwarder",
-        name_patterns=["p-narada-snap-worker.*"],
-        system_job="system_metrics",
-    ),
-    ServiceDef(
-        display_name="Google Forwarder",
-        name_patterns=["p-google-s2s-server.*"],
-        system_job="system_metrics",
-    ),
-    ServiceDef(
-        display_name="Webhook Gateway",
-        name_patterns=["px-bwg-.*"],
-        system_job="system_metrics",
-    ),
-]
-
 
 def _normalize_display_name(row_title: str) -> str:
     if row_title in _DISPLAY_NAME_OVERRIDES:
@@ -252,15 +184,10 @@ def load_services(
     else:
         log.info("No %s — skipping general services.", services_path)
 
+    ems: list[ServiceDef] = []
     if ems_path.exists():
         ems = parse_ems_dashboard(ems_path)
         log.info("Loaded %d EMS service(s) from %s", len(ems), ems_path)
-    else:
-        ems = list(DEFAULT_SERVICES)
-        log.warning("No %s — using DEFAULT_SERVICES (%d services).", ems_path, len(ems))
-
-    if not general and not ems:
-        return list(DEFAULT_SERVICES)
 
     combined = _merge_services(ems, general)
     log.info("Reporting on %d service(s) total.", len(combined))
