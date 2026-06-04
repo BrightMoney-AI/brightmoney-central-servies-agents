@@ -44,6 +44,9 @@ async def run_report(group: str | None = None) -> None:
     gateway = MetricsGateway(timeout_secs=settings.gateway_timeout_secs)
     groups: dict[str, list[tuple[str, object]]] = defaultdict(list)
 
+    collect_biz = group is None or group == "Central Services"
+    biz_metrics: list = []
+
     async with VMClient(settings.vm_base_url) as vm:
         for service in services:
             log.info("Collecting: %s [group=%s]", service.display_name, service.report_group)
@@ -61,7 +64,11 @@ async def run_report(group: str | None = None) -> None:
             else:
                 log.info("[%s] All queries succeeded.", service.display_name)
 
-    if not groups:
+        if collect_biz:
+            from .central_business_collector import collect_business_metrics
+            biz_metrics = await collect_business_metrics(vm)
+
+    if not groups and not biz_metrics:
         log.warning("No services collected — skipping Canvas post.")
         return
 
@@ -97,6 +104,14 @@ async def run_report(group: str | None = None) -> None:
         summary_blocks = _summary_blocks(collected, group_name)
         await publish_canvas(markdown, summary_blocks, title=canvas_title)
         log.info("Canvas posted: %r (%d service(s)).", canvas_title, len(collected))
+
+    if biz_metrics:
+        from .central_business_renderer import render_business_canvas
+        biz_title  = f"Central Services — Business Metrics — {date_str}"
+        biz_md     = render_business_canvas(biz_metrics, title=biz_title)
+        biz_blocks = _business_summary_blocks(biz_metrics, date_str)
+        await publish_canvas(biz_md, biz_blocks, title=biz_title)
+        log.info("Business metrics canvas posted (%d metrics).", len(biz_metrics))
 
 
 def _summary_blocks(collected: list[tuple[str, object]], group_name: str = "L0 Daily Metrics") -> list[dict]:
@@ -164,6 +179,69 @@ def _summary_blocks(collected: list[tuple[str, object]], group_name: str = "L0 D
         "elements": [{"type": "mrkdwn", "text": "Full per-endpoint breakdown → canvas below ↓"}],
     })
 
+    return blocks
+
+
+def _business_summary_blocks(metrics: list, date_str: str) -> list[dict]:
+    """Slack Block Kit notification for the business metrics canvas."""
+    from .central_business_renderer import _is_flagged, _RATE_CRIT
+
+    flagged = [m for m in metrics if _is_flagged(m)]
+    n_sections = len({m.section for m in metrics})
+
+    if not flagged:
+        overall_emoji, overall_label = "🟢", "ALL HEALTHY"
+    elif any(m.metric_type == "success_rate" and m.value < _RATE_CRIT for m in flagged):
+        overall_emoji, overall_label = "🔴", "CRITICAL"
+    else:
+        overall_emoji, overall_label = "🟡", "DEGRADED"
+
+    ts_ist   = datetime.now(IST)
+    date_str = ts_ist.strftime("%a %d %b %Y · %I:%M %p IST")
+
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "📊  Central Services — Business Metrics", "emoji": True},
+        },
+        {
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": date_str}],
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*Overall:* {overall_emoji} *{overall_label}*   ·   "
+                    f"*{n_sections}* services   ·   "
+                    f"*{len(metrics)}* checks   ·   "
+                    f"🚨 {len(flagged)} flagged"
+                ),
+            },
+        },
+    ]
+
+    if flagged:
+        lines = []
+        for m in flagged[:10]:
+            if m.metric_type == "success_rate":
+                e = "🔴" if m.value < _RATE_CRIT else "🟡"
+                lines.append(f"{e} *{m.section}* · {m.display_name}: {m.value:.1f}%")
+            else:
+                e = "🔴" if m.value >= 100 else "🟡"
+                lines.append(f"{e} *{m.section}* · {m.display_name}: {m.value:.0f}")
+        if len(flagged) > 10:
+            lines.append(f"_+{len(flagged) - 10} more_")
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "\n".join(lines)},
+        })
+
+    blocks.append({
+        "type": "context",
+        "elements": [{"type": "mrkdwn", "text": "Full breakdown → canvas below ↓"}],
+    })
     return blocks
 
 
