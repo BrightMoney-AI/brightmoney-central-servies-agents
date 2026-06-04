@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import timezone
 from typing import Optional
 
-from .models import KafkaConnectHealth, L0Report, Status
+from .models import AirflowHealth, KafkaConnectHealth, L0Report, Status
 from .renderer import (
     IST,
     _endpoint_is_flagged,
@@ -214,10 +214,52 @@ def _render_connector_section(connector_health: KafkaConnectHealth) -> str:
     return "\n".join(lines)
 
 
+def _render_airflow_section(airflow_health: AirflowHealth) -> str:
+    """Render a ## Airflow DAGs section showing failed/non-success DAGs."""
+    if not airflow_health.dag_runs:
+        return ""
+
+    total      = len(airflow_health.dag_runs)
+    successful = sum(1 for d in airflow_health.dag_runs if d.state == "success")
+    unhealthy  = [d for d in airflow_health.dag_runs if d.state != "success"]
+
+    lines: list[str] = ["## Airflow DAGs", ""]
+
+    if not unhealthy:
+        lines.append(f"✅ All {total} DAGs succeeded")
+        lines.append("")
+        return "\n".join(lines)
+
+    n_failed  = sum(1 for d in unhealthy if d.state == "failed")
+    n_running = sum(1 for d in unhealthy if d.state == "running")
+    n_other   = len(unhealthy) - n_failed - n_running
+
+    parts = [f"{total} DAGs", f"🟢 {successful} success"]
+    if n_failed:
+        parts.append(f"🔴 {n_failed} failed")
+    if n_running:
+        parts.append(f"🔵 {n_running} running")
+    if n_other:
+        parts.append(f"⚪ {n_other} other")
+    lines.append("  ·  ".join(parts))
+    lines.append("")
+
+    lines.append("| DAG | State | Last run |")
+    lines.append("|---|---|---|")
+    for d in sorted(unhealthy, key=lambda x: x.dag_id):
+        state_emoji = "🔴" if d.state == "failed" else ("🔵" if d.state == "running" else "⚪")
+        started = d.start_date.strftime("%d %b %H:%M IST") if d.start_date else "—"
+        lines.append(f"| `{d.dag_id}` | {state_emoji} {d.state} | {started} |")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
 def render_canvas(
     reports: list[tuple[str, L0Report]],
     title: str = "",
     connector_health: Optional[KafkaConnectHealth] = None,
+    airflow_health: Optional[AirflowHealth] = None,
 ) -> str:
     """
     Returns full canvas markdown.
@@ -242,6 +284,10 @@ def render_canvas(
         connector_section = _render_connector_section(connector_health)
         if connector_section:
             sections.append(connector_section)
+    if airflow_health:
+        airflow_section = _render_airflow_section(airflow_health)
+        if airflow_section:
+            sections.append(airflow_section)
 
     header = f"# {title}\n\n" if title else ""
     footer = "\n\n---\n\n🟢 Healthy   🟡 Warning 40-59%   🔴 Critical ≥60%   ·   brightmoney observability"

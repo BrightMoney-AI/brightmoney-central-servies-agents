@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     avg_latency_warn_ms: float = 500.0
     avg_latency_crit_ms: float = 1000.0
 
+    # Airflow metadata DB (empty = disabled)
+    airflow_db_url: str = ""
+
     # Kafka Connect REST API base URLs (empty = disabled)
     kafka_connect_kafka_sink_url: str = ""
     kafka_connect_cdc_sink_url: str = ""

@@ -4,6 +4,7 @@ Collects all service metrics, then posts ONE Slack Canvas per report_group
 (e.g. "UAA Services", "Central Services", "Data Platform").
 """
 from __future__ import annotations
+import asyncio
 import logging
 from collections import defaultdict
 
@@ -17,6 +18,7 @@ from .config import settings
 from .collector import collect
 from .formatter import to_l0_report
 from .gateway import MetricsGateway
+from .airflow_client import fetch_airflow_health
 from .kafka_connect import fetch_all_connector_health
 from .models import Status
 from .services import load_services
@@ -62,13 +64,15 @@ async def run_report() -> None:
     ts_ist   = datetime.now(IST)
     date_str = ts_ist.strftime("%d %b %Y")
 
-    # Fetch Kafka Connect health once — only shown in Data Platform canvas
-    connector_health = None
-    if settings.kafka_connect_instances:
-        log.info("Fetching Kafka Connect connector health...")
-        connector_health = await fetch_all_connector_health(settings.kafka_connect_instances)
-        total_instances = len(connector_health.instances)
-        log.info("Connector health fetched: %d instance(s).", total_instances)
+    # Fetch Data Platform extras (connector health + Airflow DAG runs) concurrently
+    connector_health, airflow_health = await asyncio.gather(
+        fetch_all_connector_health(settings.kafka_connect_instances) if settings.kafka_connect_instances else asyncio.sleep(0),
+        fetch_airflow_health(settings.airflow_db_url),
+    )
+    if connector_health:
+        log.info("Connector health fetched: %d instance(s).", len(connector_health.instances))
+    if airflow_health:
+        log.info("Airflow health fetched: %d DAG run(s).", len(airflow_health.dag_runs))
 
     # Post canvases in canonical order, then any unrecognised groups last
     ordered_keys = [g for g in _GROUP_ORDER if g in groups]
@@ -78,7 +82,8 @@ async def run_report() -> None:
         collected      = groups[group_name]
         canvas_title   = f"{group_name} — L0 Daily Metrics — {date_str}"
         ch             = connector_health if group_name == "Data Platform" else None
-        markdown       = render_canvas(collected, title=canvas_title, connector_health=ch)
+        ah             = airflow_health   if group_name == "Data Platform" else None
+        markdown       = render_canvas(collected, title=canvas_title, connector_health=ch, airflow_health=ah)
         summary_blocks = _summary_blocks(collected, group_name)
         await publish_canvas(markdown, summary_blocks, title=canvas_title)
         log.info("Canvas posted: %r (%d service(s)).", canvas_title, len(collected))
