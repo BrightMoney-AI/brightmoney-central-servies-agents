@@ -105,9 +105,6 @@ def to_l0_report(report: MetricsReport, service_name: str = "All Services", show
               settings.avg_latency_crit_ms * 3)
         for ep in active_ep
     ]
-    for ep in active_ep:
-        if (ep_error_map.get(ep) or 0) > 0:
-            ep_icons.append("🔴")
 
     overall_status = _icons_to_status(server_icons + api_icons + ep_icons)
 
