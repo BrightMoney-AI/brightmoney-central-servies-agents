@@ -111,6 +111,23 @@ class KafkaConnectHealth:
 
 
 @dataclass
+class AirflowDagRun:
+    dag_id: str
+    state: str              # success, failed, running, queued, up_for_retry
+    start_date: Optional[datetime]
+    end_date: Optional[datetime]
+
+    @property
+    def is_healthy(self) -> bool:
+        return self.state == "success"
+
+
+@dataclass
+class AirflowHealth:
+    dag_runs: list[AirflowDagRun]
+
+
+@dataclass
 class L0Report:
     service:              str
     reported_at:          datetime
