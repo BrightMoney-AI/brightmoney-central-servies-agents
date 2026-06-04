@@ -203,7 +203,7 @@ WHERE d.is_active = TRUE AND m.is_active = TRUE
 """
 
 _TRINO_DBZ_INVALID = """
-SELECT d.name
+SELECT DISTINCT d.name
 FROM iceberg_db.cosmos_db__public__dataset_dataset__current_view_presto d
 JOIN iceberg_db.cosmos_db__public__dataset_datasetbaserefresh__current_view_presto dr ON dr.dataset_id = d.id
 WHERE d.is_active = TRUE
