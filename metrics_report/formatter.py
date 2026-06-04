@@ -52,6 +52,37 @@ def _latency_spike_icon(current: Optional[float], baseline: Optional[float]) -> 
     return "🟢"
 
 
+def _success_drop_icon(current: Optional[float], baseline: Optional[float]) -> str:
+    """Flag only if success rate has dropped meaningfully vs 7-day baseline.
+    Falls back to absolute threshold when no historical data is available."""
+    if current is None:
+        return "⚪"
+    if baseline is None:
+        return _icon(current, warn=95.0, crit=90.0, invert=True)
+    drop = baseline - current  # percentage-point drop from normal
+    if drop >= 10.0:
+        return "🔴"
+    if drop >= 5.0:
+        return "🟡"
+    return "🟢"
+
+
+def _error_spike_icon(current: Optional[float], baseline: Optional[float]) -> str:
+    """Flag only if error rate has spiked vs 7-day baseline.
+    Falls back to absolute threshold when no historical data is available."""
+    if current is None:
+        return "⚪"
+    if baseline is None or baseline < 0.5:
+        # Baseline near zero — use absolute threshold to avoid division noise
+        return _icon(current, settings.error_rate_warn_pct, settings.error_rate_crit_pct)
+    ratio = current / baseline
+    if ratio >= 3.0:
+        return "🔴"
+    if ratio >= 2.0:
+        return "🟡"
+    return "🟢"
+
+
 # ── Group inference ────────────────────────────────────────────────────────────
 
 def _infer_group(server_name: str) -> str:
@@ -84,11 +115,13 @@ def to_l0_report(report: MetricsReport, service_name: str = "All Services", show
     disk_map = dict(sv.get("disk_usage_pct",    []))
     all_servers = sorted(set(cpu_map) | set(mem_map) | set(disk_map))
 
-    tput             = v.get("api_throughput_rps")
-    success          = v.get("api_success_rate_pct")
-    error            = v.get("api_error_rate_pct")
-    avg_lat          = v.get("api_avg_latency_ms")
-    avg_lat_baseline = v.get("api_avg_latency_baseline_ms")
+    tput                  = v.get("api_throughput_rps")
+    success               = v.get("api_success_rate_pct")
+    error                 = v.get("api_error_rate_pct")
+    avg_lat               = v.get("api_avg_latency_ms")
+    avg_lat_baseline      = v.get("api_avg_latency_baseline_ms")
+    success_baseline      = v.get("api_success_rate_baseline_pct")
+    error_baseline        = v.get("api_error_rate_baseline_pct")
 
     ep_hits_map    = dict(ev.get("endpoint_hits",           []))
     ep_success_map = dict(ev.get("endpoint_success_pct",    []))
@@ -108,13 +141,14 @@ def to_l0_report(report: MetricsReport, service_name: str = "All Services", show
         + [_icon(disk_map.get(s), settings.disk_warn_pct, settings.disk_crit_pct) for s in all_servers]
     )
     api_icons = [
-        _icon(error,   settings.error_rate_warn_pct, settings.error_rate_crit_pct),
-        _icon(success, warn=95.0, crit=90.0, invert=True),
+        _error_spike_icon(error, error_baseline),
+        _success_drop_icon(success, success_baseline),
         _latency_spike_icon(avg_lat, avg_lat_baseline),
     ]
-    ep_p99_baseline_map = dict(ev.get("endpoint_p99_latency_baseline_ms", []))
+    ep_p99_baseline_map     = dict(ev.get("endpoint_p99_latency_baseline_ms", []))
+    ep_success_baseline_map = dict(ev.get("endpoint_success_baseline_pct",    []))
     ep_icons = [
-        _icon(ep_success_map.get(ep), warn=95.0, crit=90.0, invert=True)
+        _success_drop_icon(ep_success_map.get(ep), ep_success_baseline_map.get(ep))
         for ep in active_ep
     ] + [
         _latency_spike_icon(ep_p99_map.get(ep), ep_p99_baseline_map.get(ep))
@@ -152,12 +186,13 @@ def to_l0_report(report: MetricsReport, service_name: str = "All Services", show
 
     endpoints = [
         Endpoint(
-            path            = ep,
-            hits            = int(ep_hits_map.get(ep) or 0),
-            success_pct     = ep_success_map.get(ep) or 0.0,
-            errors          = int(ep_error_map[ep]) if ep in ep_error_map else None,
-            p99_ms          = ep_p99_map.get(ep) or 0.0,
-            p99_baseline_ms = ep_p99_baseline_map.get(ep),
+            path                 = ep,
+            hits                 = int(ep_hits_map.get(ep) or 0),
+            success_pct          = ep_success_map.get(ep) or 0.0,
+            errors               = int(ep_error_map[ep]) if ep in ep_error_map else None,
+            p99_ms               = ep_p99_map.get(ep) or 0.0,
+            p99_baseline_ms      = ep_p99_baseline_map.get(ep),
+            success_baseline_pct = ep_success_baseline_map.get(ep),
         )
         for ep in active_ep
     ]
@@ -186,11 +221,13 @@ def to_l0_report(report: MetricsReport, service_name: str = "All Services", show
         status               = overall_status,
         system               = SystemHealth(servers=servers),
         api                  = ApiMetrics(
-            throughput_rps          = tput    or 0.0,
-            success_rate_pct        = success or 0.0,
-            error_rate_pct          = error   or 0.0,
-            avg_latency_p50_ms      = int(avg_lat or 0),
-            avg_latency_baseline_ms = avg_lat_baseline,
+            throughput_rps            = tput    or 0.0,
+            success_rate_pct          = success or 0.0,
+            error_rate_pct            = error   or 0.0,
+            avg_latency_p50_ms        = int(avg_lat or 0),
+            avg_latency_baseline_ms   = avg_lat_baseline,
+            success_rate_baseline_pct = success_baseline,
+            error_rate_baseline_pct   = error_baseline,
         ),
         endpoints            = endpoints,
         thresholds           = thresholds,

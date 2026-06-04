@@ -127,8 +127,16 @@ def _render_service(report: L0Report) -> str:
         lines.append("")
         for ep in flagged:
             reasons   = _flag_reasons(ep, t)
-            suc_emoji = "🔴" if ep.success_pct < 80 else ("🟡" if ep.success_pct < t.success_warn_pct else "🟢")
-            p99_emoji = "🔴" if ep.p99_ms >= t.p99_crit_ms else ("🟡" if ep.p99_ms >= t.p99_warn_ms else "🟢")
+            if ep.success_baseline_pct is not None:
+                _drop = ep.success_baseline_pct - ep.success_pct
+                suc_emoji = "🔴" if _drop >= 10.0 else ("🟡" if _drop >= 5.0 else "🟢")
+            else:
+                suc_emoji = "🔴" if ep.success_pct < 80 else ("🟡" if ep.success_pct < t.success_warn_pct else "🟢")
+            if ep.p99_baseline_ms and ep.p99_baseline_ms > 0:
+                _r = ep.p99_ms / ep.p99_baseline_ms
+                p99_emoji = "🔴" if _r >= 2.0 else ("🟡" if _r >= 1.5 else "🟢")
+            else:
+                p99_emoji = "🔴" if ep.p99_ms >= t.p99_crit_ms else ("🟡" if ep.p99_ms >= t.p99_warn_ms else "🟢")
             err_str   = "N/A" if ep.errors is None else str(ep.errors)
 
             p99_str = _fmt_p99(ep.p99_ms)

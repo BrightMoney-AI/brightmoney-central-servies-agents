@@ -153,11 +153,27 @@ def build_api_queries(
             promql=f"avg(avg_over_time(django_request_latency_seconds{s_p50}[{window}])) * 1000",
             unit="ms",
         ),
-        # 7-day baseline ending 24h ago — used to detect latency spikes vs normal operating range
+        # 7-day baselines ending 24h ago — used to detect spikes vs normal operating range
         Query(
             name="api_avg_latency_baseline_ms",
             promql=f"avg(avg_over_time(django_request_latency_seconds{s_p50}[7d] offset 24h)) * 1000",
             unit="ms",
+        ),
+        Query(
+            name="api_success_rate_baseline_pct",
+            promql=(
+                f"sum(rate({api_response_metric}{s_success}[7d] offset 24h))"
+                f" / sum(rate({api_response_metric}{s_base}[7d] offset 24h)) * 100"
+            ),
+            unit="%",
+        ),
+        Query(
+            name="api_error_rate_baseline_pct",
+            promql=(
+                f"sum(rate({api_response_metric}{s_error}[7d] offset 24h))"
+                f" / sum(rate({api_response_metric}{s_base}[7d] offset 24h)) * 100"
+            ),
+            unit="%",
         ),
     ]
 
@@ -232,11 +248,20 @@ def build_per_endpoint_queries(
             unit="ms",
             per_server=True,
         ),
-        # 7-day baseline per endpoint — used to detect latency spikes vs normal operating range
+        # 7-day baselines per endpoint — used to detect spikes vs normal operating range
         Query(
             name="endpoint_p99_latency_baseline_ms",
             promql=f"avg by (endpoint) (avg_over_time(django_request_latency_seconds{s_latency}[7d] offset 24h)) * 1000",
             unit="ms",
+            per_server=True,
+        ),
+        Query(
+            name="endpoint_success_baseline_pct",
+            promql=(
+                f"sum(rate({api_response_metric}{s_success}[7d] offset 24h)) by (endpoint)"
+                f" / sum(rate({api_response_metric}{s_base}[7d] offset 24h)) by (endpoint) * 100"
+            ),
+            unit="%",
             per_server=True,
         ),
     ]
