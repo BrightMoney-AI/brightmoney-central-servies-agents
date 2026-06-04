@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     avg_latency_warn_ms: float = 500.0
     avg_latency_crit_ms: float = 1000.0
 
+    # Trino / Iceberg connection
+    trino_host: str   = "int-trino.brightmoney.co"
+    trino_port: int   = 443
+    trino_user: str   = "uaa_team_metrics"
+    trino_source: str = "engg_team_code"
+
     # Airflow metadata DB (empty = disabled)
     airflow_db_url: str = ""
 

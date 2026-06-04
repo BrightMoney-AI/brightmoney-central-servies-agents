@@ -44,8 +44,13 @@ async def run_report(group: str | None = None) -> None:
     gateway = MetricsGateway(timeout_secs=settings.gateway_timeout_secs)
     groups: dict[str, list[tuple[str, object]]] = defaultdict(list)
 
-    collect_biz = group is None or group == "Central Services"
-    biz_metrics: list = []
+    collect_central_biz = group is None or group == "Central Services"
+    collect_uaa_biz     = group is None or group == "UAA Services"
+    collect_dp_biz      = group is None or group == "Data Platform"
+
+    biz_metrics:     list = []
+    uaa_biz_metrics: list = []
+    dp_biz_metrics:  list = []
 
     async with VMClient(settings.vm_base_url) as vm:
         for service in services:
@@ -64,11 +69,20 @@ async def run_report(group: str | None = None) -> None:
             else:
                 log.info("[%s] All queries succeeded.", service.display_name)
 
-        if collect_biz:
+        if collect_central_biz:
             from .central_business_collector import collect_business_metrics
             biz_metrics = await collect_business_metrics(vm)
 
-    if not groups and not biz_metrics:
+    # Trino-based business metrics (run outside VM context — separate connection)
+    if collect_uaa_biz:
+        from .uaa_business_collector import collect_uaa_business_metrics
+        uaa_biz_metrics = await collect_uaa_business_metrics()
+
+    if collect_dp_biz:
+        from .dp_business_collector import collect_dp_business_metrics
+        dp_biz_metrics = await collect_dp_business_metrics()
+
+    if not groups and not biz_metrics and not uaa_biz_metrics and not dp_biz_metrics:
         log.warning("No services collected — skipping Canvas post.")
         return
 
@@ -111,7 +125,23 @@ async def run_report(group: str | None = None) -> None:
         biz_md     = render_business_canvas(biz_metrics, title=biz_title)
         biz_blocks = _business_summary_blocks(biz_metrics, date_str)
         await publish_canvas(biz_md, biz_blocks, title=biz_title)
-        log.info("Business metrics canvas posted (%d metrics).", len(biz_metrics))
+        log.info("Central business metrics canvas posted (%d metrics).", len(biz_metrics))
+
+    if uaa_biz_metrics:
+        from .uaa_business_renderer import render_uaa_business_canvas
+        uaa_biz_title  = f"UAA Services — Business Metrics — {date_str}"
+        uaa_biz_md     = render_uaa_business_canvas(uaa_biz_metrics, title=uaa_biz_title)
+        uaa_biz_blocks = _uaa_biz_summary_blocks(uaa_biz_metrics, date_str)
+        await publish_canvas(uaa_biz_md, uaa_biz_blocks, title=uaa_biz_title)
+        log.info("UAA business metrics canvas posted (%d metrics).", len(uaa_biz_metrics))
+
+    if dp_biz_metrics:
+        from .dp_business_renderer import render_dp_business_canvas
+        dp_biz_title  = f"Data Platform — Business Metrics — {date_str}"
+        dp_biz_md     = render_dp_business_canvas(dp_biz_metrics, title=dp_biz_title)
+        dp_biz_blocks = _dp_biz_summary_blocks(dp_biz_metrics, date_str)
+        await publish_canvas(dp_biz_md, dp_biz_blocks, title=dp_biz_title)
+        log.info("Data Platform business metrics canvas posted (%d metrics).", len(dp_biz_metrics))
 
 
 def _summary_blocks(collected: list[tuple[str, object]], group_name: str = "L0 Daily Metrics") -> list[dict]:
@@ -242,6 +272,100 @@ def _business_summary_blocks(metrics: list, date_str: str) -> list[dict]:
         "type": "context",
         "elements": [{"type": "mrkdwn", "text": "Full breakdown → canvas below ↓"}],
     })
+    return blocks
+
+
+def _uaa_biz_summary_blocks(metrics: list, date_str: str) -> list[dict]:
+    from .uaa_business_renderer import _is_flagged, _RATE_CRIT
+
+    flagged    = [m for m in metrics if _is_flagged(m)]
+    n_sections = len({m.section for m in metrics})
+
+    if not flagged:
+        overall_emoji, overall_label = "🟢", "ALL HEALTHY"
+    elif any(m.metric_type == "success_rate" and m.value < _RATE_CRIT for m in flagged):
+        overall_emoji, overall_label = "🔴", "CRITICAL"
+    else:
+        overall_emoji, overall_label = "🟡", "DEGRADED"
+
+    ts_ist   = datetime.now(IST)
+    date_str = ts_ist.strftime("%a %d %b %Y · %I:%M %p IST")
+
+    blocks: list[dict] = [
+        {"type": "header", "text": {"type": "plain_text", "text": "📊  UAA Services — Business Metrics", "emoji": True}},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": date_str}]},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*Overall:* {overall_emoji} *{overall_label}*   ·   "
+                    f"*{n_sections}* sections   ·   "
+                    f"*{len(metrics)}* checks   ·   "
+                    f"🚨 {len(flagged)} flagged"
+                ),
+            },
+        },
+    ]
+
+    if flagged:
+        lines = []
+        for m in flagged[:10]:
+            e = "🔴" if (m.metric_type == "success_rate" and m.value < _RATE_CRIT) else "🟡"
+            val = f"{m.value:.1f}%" if m.metric_type == "success_rate" else f"{m.value:.0f}"
+            lines.append(f"{e} *{m.section}* · {m.display_name}: {val}")
+        if len(flagged) > 10:
+            lines.append(f"_+{len(flagged) - 10} more_")
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}})
+
+    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": "Full breakdown → canvas below ↓"}]})
+    return blocks
+
+
+def _dp_biz_summary_blocks(metrics: list, date_str: str) -> list[dict]:
+    from .dp_business_renderer import _is_flagged, _RATE_CRIT
+
+    flagged    = [m for m in metrics if _is_flagged(m)]
+    n_sections = len({m.section for m in metrics})
+
+    if not flagged:
+        overall_emoji, overall_label = "🟢", "ALL HEALTHY"
+    elif any(m.metric_type == "success_rate" and m.value < _RATE_CRIT for m in flagged):
+        overall_emoji, overall_label = "🔴", "CRITICAL"
+    else:
+        overall_emoji, overall_label = "🟡", "DEGRADED"
+
+    ts_ist   = datetime.now(IST)
+    date_str = ts_ist.strftime("%a %d %b %Y · %I:%M %p IST")
+
+    blocks: list[dict] = [
+        {"type": "header", "text": {"type": "plain_text", "text": "📊  Data Platform — Business Metrics", "emoji": True}},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": date_str}]},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*Overall:* {overall_emoji} *{overall_label}*   ·   "
+                    f"*{n_sections}* sections   ·   "
+                    f"*{len(metrics)}* checks   ·   "
+                    f"🚨 {len(flagged)} flagged"
+                ),
+            },
+        },
+    ]
+
+    if flagged:
+        lines = []
+        for m in flagged[:10]:
+            e = "🔴" if (m.metric_type == "success_rate" and m.value < _RATE_CRIT) else "🟡"
+            val = f"{m.value:.1f}%" if m.metric_type == "success_rate" else f"{m.value:.0f}"
+            lines.append(f"{e} *{m.section}* · {m.display_name}: {val}")
+        if len(flagged) > 10:
+            lines.append(f"_+{len(flagged) - 10} more_")
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}})
+
+    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": "Full breakdown → canvas below ↓"}]})
     return blocks
 
 
