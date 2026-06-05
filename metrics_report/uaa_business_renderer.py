@@ -21,6 +21,7 @@ _SECTION_ORDER: list[str] = [
     "Plaid Batch Refresh",
     "Plaid Force Refresh",
     "Partner Costs",
+    "Txn Quality",
 ]
 
 # For latency metrics: lower is better so delta coloring is inverted vs counts
