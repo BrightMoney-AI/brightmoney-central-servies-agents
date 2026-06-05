@@ -21,9 +21,11 @@ class BusinessMetric:
     display_name: str
     query_name:   str
     section:      str
-    metric_type:  str    # "success_rate" | "failure_count" | "total_count" | "rate" | "provider_comparison"
+    metric_type:  str    # "success_rate" | "failure_count" | "total_count" | "rate"
+                         # | "provider_comparison"  — D vs D-1 per provider table
+                         # | "source_comparison"    — Today vs Yesterday per source × flow table
     value:        float
-    details:      list[str] = field(default_factory=list)  # rows for provider_comparison tables
+    details:      list[str] = field(default_factory=list)  # pipe-delimited rows for comparison tables
 
 
 # ── Onboarding Provider Sessions ──────────────────────────────────────────────
@@ -134,12 +136,99 @@ async def _fetch_onboarding_provider_sessions() -> list[BusinessMetric]:
     )]
 
 
+# ── Successful Account Linkings by Source & Flow ──────────────────────────────
+# Counts sessions where ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT fired,
+# broken down by client_source (web / android / ios) and flow type
+# (Onboarding vs Other), comparing the last 4 hours vs the same 4-hour window
+# 24 hours ago (yesterday).
+
+_TRINO_ACCOUNT_LINKING_BY_SOURCE = """
+WITH successful_sessions AS (
+    SELECT DISTINCT
+        s.id           AS session_id,
+        s.created_at,
+        JSON_EXTRACT_SCALAR(s.session_data, '$.flow_data.client_source') AS client_source,
+        CASE
+            WHEN JSON_EXTRACT_SCALAR(s.session_data, '$.flow_data.flow_type') = 'ONBOARDING'
+            THEN 'Onboarding'
+            ELSE 'Other'
+        END AS flow_type
+    FROM iceberg_db.brightmoney_core_uaa__public__alsm_accountlinkingsession__current_view_presto s
+    JOIN iceberg_db.brightmoney_core_uaa__public__alsm_accountlinkingeventdata__current_view_presto e
+        ON e.account_linking_session_id = s.id
+    WHERE e.event_name = 'ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT'
+      AND JSON_EXTRACT_SCALAR(s.session_data, '$.flow_data.client_source') IN ('web', 'android', 'ios')
+      AND s.created_at >= CURRENT_DATE - INTERVAL '1' DAY
+),
+today_agg AS (
+    SELECT client_source, flow_type, COUNT(*) AS sessions
+    FROM successful_sessions
+    WHERE DATE(created_at) = CURRENT_DATE
+    GROUP BY client_source, flow_type
+),
+yesterday_agg AS (
+    SELECT client_source, flow_type, COUNT(*) AS sessions
+    FROM successful_sessions
+    WHERE DATE(created_at) = CURRENT_DATE - INTERVAL '1' DAY
+    GROUP BY client_source, flow_type
+)
+SELECT
+    COALESCE(t.client_source, y.client_source) AS client_source,
+    COALESCE(t.flow_type,     y.flow_type)     AS flow_type,
+    COALESCE(t.sessions,      0)               AS today_sessions,
+    COALESCE(y.sessions,      0)               AS yesterday_sessions
+FROM today_agg t
+FULL OUTER JOIN yesterday_agg y
+    ON  y.client_source = t.client_source
+    AND y.flow_type     = t.flow_type
+ORDER BY client_source, flow_type
+"""
+
+
+async def _fetch_account_linking_by_source() -> list[BusinessMetric]:
+    try:
+        rows = await execute_query(_TRINO_ACCOUNT_LINKING_BY_SOURCE)
+    except Exception as exc:
+        log.error("Account linking by source query failed: %s", exc)
+        return []
+
+    if not rows:
+        log.info("Account linking by source: no data returned.")
+        return []
+
+    details: list[str] = []
+    total_today = 0
+
+    for row in rows:
+        source     = str(row.get("client_source") or "unknown")
+        flow       = str(row.get("flow_type")     or "Other")
+        today      = int(row.get("today_sessions")     or 0)
+        yesterday  = int(row.get("yesterday_sessions") or 0)
+        delta      = today - yesterday
+        delta_str  = f"+{delta}" if delta >= 0 else str(delta)
+        # Pipe-delimited: source | flow | today | yesterday | delta
+        details.append(f"{source}|{flow}|{today}|{yesterday}|{delta_str}")
+        total_today += today
+
+    log.info("Account linking by source: %d row(s).", len(details))
+
+    return [BusinessMetric(
+        display_name="Successful Account Linkings",
+        query_name="account_linking_by_source",
+        section="Account Linking",
+        metric_type="source_comparison",
+        value=float(total_today),
+        details=details,
+    )]
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 async def collect_uaa_business_metrics() -> list[BusinessMetric]:
     """Collect all UAA business metrics from Trino concurrently."""
     results = await asyncio.gather(
         _fetch_onboarding_provider_sessions(),
+        _fetch_account_linking_by_source(),
     )
     metrics: list[BusinessMetric] = [m for batch in results for m in batch]
     log.info("UAA business metrics collected: %d metric(s).", len(metrics))

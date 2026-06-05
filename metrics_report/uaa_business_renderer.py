@@ -71,7 +71,7 @@ def _section_worst_emoji(metrics: list[BusinessMetric]) -> str:
     return "🔴" if is_crit else "🟡"
 
 
-# ── comparison table renderer ─────────────────────────────────────────────────
+# ── comparison table renderers ────────────────────────────────────────────────
 
 def _render_provider_comparison(m: BusinessMetric) -> str:
     """Render a provider_comparison metric as a D vs D-1 Markdown table."""
@@ -89,6 +89,28 @@ def _render_provider_comparison(m: BusinessMetric) -> str:
     return "\n".join(lines)
 
 
+def _render_source_comparison(m: BusinessMetric) -> str:
+    """Render a source_comparison metric as a Today vs Yesterday breakdown table.
+
+    Details rows are pipe-delimited: source | flow | today | yesterday | delta
+    """
+    lines: list[str] = [
+        f"**{m.display_name}**  _(today vs yesterday — full day)_",
+        "",
+        "| Source | Flow | Today | Yesterday | Change |",
+        "|---|---|---|---|---|",
+    ]
+    for detail in m.details:
+        parts = [p.strip() for p in detail.split("|")]
+        if len(parts) == 5:
+            source, flow, today, yesterday, delta = parts
+            # Colour the delta: green if positive/zero, red if negative
+            delta_fmt = f"🟢 {delta}" if not delta.startswith("-") else f"🔴 {delta}"
+            lines.append(f"| {source} | {flow} | {today} | {yesterday} | {delta_fmt} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
 # ── section renderer ──────────────────────────────────────────────────────────
 
 def _render_section(section: str, items: list[BusinessMetric]) -> str:
@@ -96,7 +118,7 @@ def _render_section(section: str, items: list[BusinessMetric]) -> str:
     check_metrics      = [m for m in items if m.metric_type in ("success_rate", "failure_count")]
     healthy_checks     = [m for m in check_metrics if not _is_flagged(m)]
     info_metrics       = [m for m in items if m.metric_type in ("total_count", "rate")]
-    comparison_metrics = [m for m in items if m.metric_type == "provider_comparison"]
+    comparison_metrics = [m for m in items if m.metric_type in ("provider_comparison", "source_comparison")]
 
     lines: list[str] = []
 
@@ -137,7 +159,10 @@ def _render_section(section: str, items: list[BusinessMetric]) -> str:
 
     # Comparison tables always rendered regardless of section flag status
     for m in comparison_metrics:
-        lines.extend(_render_provider_comparison(m).splitlines())
+        if m.metric_type == "source_comparison":
+            lines.extend(_render_source_comparison(m).splitlines())
+        else:
+            lines.extend(_render_provider_comparison(m).splitlines())
         lines.append("")
 
     return "\n".join(lines)
