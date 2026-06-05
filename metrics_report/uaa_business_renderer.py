@@ -15,8 +15,10 @@ from .uaa_business_collector import BusinessMetric
 # Section display order
 _SECTION_ORDER: list[str] = [
     "Onboarding",
-    "ALSM",
     "Account Linking",
+    "ALSM",
+    "Plaid Batch Refresh",
+    "Plaid Force Refresh",
 ]
 
 _RATE_CRIT = 95.0   # success_rate below this → 🔴
@@ -89,6 +91,28 @@ def _render_provider_comparison(m: BusinessMetric) -> str:
     return "\n".join(lines)
 
 
+def _render_multi_col_table(m: BusinessMetric) -> str:
+    """Render a multi_col_table metric. details[0] = pipe-delimited headers, details[1:] = rows."""
+    if len(m.details) < 2:
+        return f"**{m.display_name}** — no data\n"
+    headers = [h.strip() for h in m.details[0].split("|")]
+    sep     = "|".join("---" for _ in headers)
+    lines   = [
+        f"**{m.display_name}**",
+        "",
+        "| " + " | ".join(headers) + " |",
+        f"|{sep}|",
+    ]
+    for row in m.details[1:]:
+        parts = [p.strip() for p in row.split("|")]
+        # Pad or trim to match header column count
+        while len(parts) < len(headers):
+            parts.append("-")
+        lines.append("| " + " | ".join(parts[:len(headers)]) + " |")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _render_source_comparison(m: BusinessMetric) -> str:
     """Render a source_comparison metric as a Today vs Yesterday breakdown table.
 
@@ -119,6 +143,7 @@ def _render_section(section: str, items: list[BusinessMetric]) -> str:
     healthy_checks     = [m for m in check_metrics if not _is_flagged(m)]
     info_metrics       = [m for m in items if m.metric_type in ("total_count", "rate")]
     comparison_metrics = [m for m in items if m.metric_type in ("provider_comparison", "source_comparison")]
+    table_metrics      = [m for m in items if m.metric_type == "multi_col_table"]
 
     lines: list[str] = []
 
@@ -126,8 +151,8 @@ def _render_section(section: str, items: list[BusinessMetric]) -> str:
         n = len(check_metrics)
         if n > 0:
             label = f"all {n} check{'s' if n != 1 else ''} healthy"
-        elif comparison_metrics:
-            label = "session overview"
+        elif comparison_metrics or table_metrics:
+            label = "overview"
         else:
             label = "no checks"
         lines.append(f"### ✅ {section} · {label}")
@@ -163,6 +188,11 @@ def _render_section(section: str, items: list[BusinessMetric]) -> str:
             lines.extend(_render_source_comparison(m).splitlines())
         else:
             lines.extend(_render_provider_comparison(m).splitlines())
+        lines.append("")
+
+    # Generic multi-column tables always rendered
+    for m in table_metrics:
+        lines.extend(_render_multi_col_table(m).splitlines())
         lines.append("")
 
     return "\n".join(lines)
