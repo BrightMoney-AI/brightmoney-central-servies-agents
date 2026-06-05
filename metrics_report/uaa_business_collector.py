@@ -158,18 +158,19 @@ WITH successful_sessions AS (
         ON e.account_linking_session_id = s.id
     WHERE e.event_name = 'ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT'
       AND JSON_EXTRACT_SCALAR(s.session_data, '$.flow_data.client_source') IN ('web', 'android', 'ios')
-      AND s.created_at >= CURRENT_DATE - INTERVAL '1' DAY
+      AND s.created_at >= NOW() - INTERVAL '28' HOUR
 ),
 today_agg AS (
     SELECT client_source, flow_type, COUNT(*) AS sessions
     FROM successful_sessions
-    WHERE DATE(created_at) = CURRENT_DATE
+    WHERE created_at >= NOW() - INTERVAL '4' HOUR
     GROUP BY client_source, flow_type
 ),
 yesterday_agg AS (
     SELECT client_source, flow_type, COUNT(*) AS sessions
     FROM successful_sessions
-    WHERE DATE(created_at) = CURRENT_DATE - INTERVAL '1' DAY
+    WHERE created_at >= NOW() - INTERVAL '28' HOUR
+      AND created_at <  NOW() - INTERVAL '24' HOUR
     GROUP BY client_source, flow_type
 )
 SELECT

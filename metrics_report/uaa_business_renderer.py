@@ -95,7 +95,7 @@ def _render_source_comparison(m: BusinessMetric) -> str:
     Details rows are pipe-delimited: source | flow | today | yesterday | delta
     """
     lines: list[str] = [
-        f"**{m.display_name}**  _(today vs yesterday — full day)_",
+        f"**{m.display_name}**  _(last 4h today vs same 4h window yesterday)_",
         "",
         "| Source | Flow | Today | Yesterday | Change |",
         "|---|---|---|---|---|",
