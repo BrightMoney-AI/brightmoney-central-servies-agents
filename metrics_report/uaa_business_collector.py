@@ -240,33 +240,23 @@ async def _fetch_account_linking_by_source() -> list[BusinessMetric]:
 # accounts in plaid_batch_refresh_metadata. Lower = fresher data.
 
 _TRINO_PLAID_BATCH_RECENCY = """
-WITH em_data AS (
+WITH recency_delta AS (
     SELECT
-        provider_account_id,
-        GREATEST(COALESCE(last_balance_force_fetched, last_data_updated_at), last_data_updated_at) AS last_data_updated_at
+        DATE_DIFF('hour',
+            GREATEST(COALESCE(last_balance_force_fetched, last_data_updated_at), last_data_updated_at),
+            current_timestamp
+        ) AS delta_hrs
     FROM uaa_db.plaid_batch_refresh_metadata
-),
-recency_delta AS (
-    SELECT
-        provider_account_id,
-        DATE_DIFF('hour', last_data_updated_at, current_timestamp) AS delta_hrs
-    FROM em_data
-    WHERE last_data_updated_at IS NOT NULL
-),
-numbered AS (
-    SELECT
-        NTILE(100) OVER (ORDER BY delta_hrs) AS pct_rank,
-        delta_hrs
-    FROM recency_delta
+    WHERE COALESCE(last_balance_force_fetched, last_data_updated_at) IS NOT NULL
 )
 SELECT
-    COUNT(*)                                                             AS number_of_accounts,
-    MAX(CASE WHEN pct_rank = 50 THEN delta_hrs END)                     AS p50,
-    MAX(CASE WHEN pct_rank = 75 THEN delta_hrs END)                     AS p75,
-    MAX(CASE WHEN pct_rank = 90 THEN delta_hrs END)                     AS p90,
-    MAX(CASE WHEN pct_rank = 95 THEN delta_hrs END)                     AS p95,
-    MAX(CASE WHEN pct_rank = 99 THEN delta_hrs END)                     AS p99
-FROM numbered
+    COUNT(*)                             AS number_of_accounts,
+    approx_percentile(delta_hrs, 0.50)  AS p50,
+    approx_percentile(delta_hrs, 0.75)  AS p75,
+    approx_percentile(delta_hrs, 0.90)  AS p90,
+    approx_percentile(delta_hrs, 0.95)  AS p95,
+    approx_percentile(delta_hrs, 0.99)  AS p99
+FROM recency_delta
 """
 
 
@@ -469,7 +459,7 @@ async def _fetch_plaid_batch_trend() -> list[BusinessMetric]:
     for r in rows[:24]:
         details.append(f"{_fmt_ts(r.get('metric_hour'))}|{r.get('success_pct') or 0}%|{r.get('error_pct') or 0}%")
     return [BusinessMetric(
-        display_name="Success / Failure Trend (Last 24h)",
+        display_name="Hourly Refresh Health (Last 24h)",
         query_name="plaid_batch_trend",
         section="Plaid Batch Refresh",
         metric_type="multi_col_table",
@@ -714,21 +704,36 @@ async def _fetch_plaid_force_refresh_trend() -> list[BusinessMetric]:
 # ── Public entry point ────────────────────────────────────────────────────────
 
 async def collect_uaa_business_metrics() -> list[BusinessMetric]:
-    """Collect all UAA business metrics from Trino concurrently."""
-    results = await asyncio.gather(
+    """Collect all UAA business metrics from Trino.
+
+    Existing ALSM/onboarding queries run fully concurrently.
+    Plaid queries run with a concurrency cap of 3 to avoid saturating
+    the Trino queue (which triggers the 15s–45s retry backoff).
+    """
+    # Fast ALSM / account-linking queries — fully concurrent
+    fast = await asyncio.gather(
         _fetch_onboarding_provider_sessions(),
         _fetch_account_linking_by_source(),
-        # Plaid Batch Refresh
-        _fetch_plaid_batch_recency(),
-        _fetch_plaid_batch_metadata_recency(),
-        _fetch_plaid_batch_historical_recency(),
-        _fetch_plaid_batch_refresh_errors(),
-        _fetch_plaid_batch_trend(),
-        # Plaid Force Refresh
-        _fetch_plaid_force_refresh_daily(),
-        _fetch_plaid_force_refresh_errors(),
-        _fetch_plaid_force_refresh_trend(),
     )
-    metrics: list[BusinessMetric] = [m for batch in results for m in batch]
+
+    # Plaid queries — limit to 3 concurrent Trino requests at a time
+    sem = asyncio.Semaphore(3)
+
+    async def _limited(coro):
+        async with sem:
+            return await coro
+
+    plaid = await asyncio.gather(
+        _limited(_fetch_plaid_batch_recency()),
+        _limited(_fetch_plaid_batch_metadata_recency()),
+        _limited(_fetch_plaid_batch_historical_recency()),
+        _limited(_fetch_plaid_batch_refresh_errors()),
+        _limited(_fetch_plaid_batch_trend()),
+        _limited(_fetch_plaid_force_refresh_daily()),
+        _limited(_fetch_plaid_force_refresh_errors()),
+        _limited(_fetch_plaid_force_refresh_trend()),
+    )
+
+    metrics: list[BusinessMetric] = [m for batch in (*fast, *plaid) for m in batch]
     log.info("UAA business metrics collected: %d metric(s).", len(metrics))
     return metrics
