@@ -12,6 +12,8 @@ import logging
 from dataclasses import dataclass, field
 
 from .trino_client import execute_query
+from .vm_client import VMClient
+from .config import settings
 
 log = logging.getLogger(__name__)
 
@@ -701,6 +703,131 @@ async def _fetch_plaid_force_refresh_trend() -> list[BusinessMetric]:
     )]
 
 
+# ── ALSM Latency (P99) ────────────────────────────────────────────────────────
+# End-to-end latency from LINKING_SUCCESS_EVENT to
+# ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT for PLAID at the 99th percentile.
+# Value is in seconds (raw metric is milliseconds, divided by 1000).
+# Compares today's value vs the same instant 24 hours ago.
+
+def _alsm_latency_promql(aggregator: str) -> str:
+    return (
+        f'sum('
+        f'alsm_event_time_diff_metrics{{'
+        f'environment="prod",'
+        f'aggregator="{aggregator}",'
+        f'quantile="0.99",'
+        f'event1="LINKING_SUCCESS_EVENT",'
+        f'event2="ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT"'
+        f'}}/1000)'
+    )
+
+
+async def _fetch_alsm_latency() -> list[BusinessMetric]:
+    aggregators = ["PLAID", "DL_CAPITALONE"]
+    try:
+        async with VMClient(settings.vm_base_url) as vm:
+            queries = []
+            for agg in aggregators:
+                q = _alsm_latency_promql(agg)
+                queries += [vm.query(q), vm.query(f"{q} offset 24h")]
+            results = await asyncio.gather(*queries)
+    except Exception as exc:
+        log.error("ALSM latency query failed: %s", exc)
+        return []
+
+    details = ["Aggregator|Today P99|Yesterday P99|Change"]
+    best_today = 0.0
+
+    for i, agg in enumerate(aggregators):
+        today_raw, yesterday_raw = results[i * 2], results[i * 2 + 1]
+        if today_raw is None and yesterday_raw is None:
+            continue
+        today_s     = float(today_raw)     if today_raw     is not None else 0.0
+        yesterday_s = float(yesterday_raw) if yesterday_raw is not None else 0.0
+        delta       = today_s - yesterday_s
+        delta_str   = f"+{delta:.1f}s" if delta >= 0 else f"{delta:.1f}s"
+        delta_fmt   = f"🔴 {delta_str}" if delta > 0 else f"🟢 {delta_str}"
+        details.append(f"{agg}|{today_s:.1f}s|{yesterday_s:.1f}s|{delta_fmt}")
+        best_today  = max(best_today, today_s)
+        log.info("ALSM latency [%s]: today=%.1fs yesterday=%.1fs", agg, today_s, yesterday_s)
+
+    if len(details) == 1:
+        log.info("ALSM latency: no data returned for any aggregator.")
+        return []
+
+    return [BusinessMetric(
+        display_name="ALSM Latency — P99 (LINKING_SUCCESS → ACCOUNTS_CREATED)",
+        query_name="alsm_latency",
+        section="ALSM",
+        metric_type="multi_col_table",
+        value=best_today,
+        details=details,
+    )]
+
+
+# ── SAISM Latency (P99) ───────────────────────────────────────────────────────
+# End-to-end latency from ACCOUNTS_INGESTION_START_EVENT to
+# ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT for CRBAA and BRIGHT at P99.
+# CRBAA: no event2 exclusions needed — pin to ACCOUNTS_CREATED directly.
+# BRIGHT: original query excluded NO_VALID_ACCOUNT_FOUND_EVENT — pinning to
+#         ACCOUNTS_CREATED achieves the same result.
+
+def _saism_latency_promql(aggregator: str) -> str:
+    return (
+        f'sum('
+        f'saism_event_time_diff_metrics{{'
+        f'environment="prod",'
+        f'aggregator="{aggregator}",'
+        f'quantile="0.99",'
+        f'event1="ACCOUNTS_INGESTION_START_EVENT",'
+        f'event2="ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT"'
+        f'}}/1000)'
+    )
+
+
+async def _fetch_saism_latency() -> list[BusinessMetric]:
+    aggregators = ["CRBAA", "BRIGHT"]
+    try:
+        async with VMClient(settings.vm_base_url) as vm:
+            queries = []
+            for agg in aggregators:
+                q = _saism_latency_promql(agg)
+                queries += [vm.query(q), vm.query(f"{q} offset 24h")]
+            results = await asyncio.gather(*queries)
+    except Exception as exc:
+        log.error("SAISM latency query failed: %s", exc)
+        return []
+
+    details = ["Aggregator|Today P99|Yesterday P99|Change"]
+    best_today = 0.0
+
+    for i, agg in enumerate(aggregators):
+        today_raw, yesterday_raw = results[i * 2], results[i * 2 + 1]
+        if today_raw is None and yesterday_raw is None:
+            continue
+        today_s     = float(today_raw)     if today_raw     is not None else 0.0
+        yesterday_s = float(yesterday_raw) if yesterday_raw is not None else 0.0
+        delta       = today_s - yesterday_s
+        delta_str   = f"+{delta:.1f}s" if delta >= 0 else f"{delta:.1f}s"
+        delta_fmt   = f"🔴 {delta_str}" if delta > 0 else f"🟢 {delta_str}"
+        details.append(f"{agg}|{today_s:.1f}s|{yesterday_s:.1f}s|{delta_fmt}")
+        best_today  = max(best_today, today_s)
+        log.info("SAISM latency [%s]: today=%.1fs yesterday=%.1fs", agg, today_s, yesterday_s)
+
+    if len(details) == 1:
+        log.info("SAISM latency: no data returned for any aggregator.")
+        return []
+
+    return [BusinessMetric(
+        display_name="SAISM Latency — P99 (ACCOUNTS_INGESTION_START → ACCOUNTS_CREATED)",
+        query_name="saism_latency",
+        section="SAISM",
+        metric_type="multi_col_table",
+        value=best_today,
+        details=details,
+    )]
+
+
 # ── Partner Cost Breakdown ────────────────────────────────────────────────────
 # Daily snapshot of costs per partner from cost_cube.
 # billing_type = ONE_TIME  → daily cost (per-transaction / usage charges)
@@ -758,10 +885,12 @@ async def collect_uaa_business_metrics() -> list[BusinessMetric]:
     Plaid queries run with a concurrency cap of 3 to avoid saturating
     the Trino queue (which triggers the 15s–45s retry backoff).
     """
-    # Fast ALSM / account-linking queries — fully concurrent
+    # Fast queries — fully concurrent (HTTP to VictoriaMetrics + Trino ALSM/onboarding)
     fast = await asyncio.gather(
         _fetch_onboarding_provider_sessions(),
         _fetch_account_linking_by_source(),
+        _fetch_alsm_latency(),
+        _fetch_saism_latency(),
     )
 
     # Plaid queries — limit to 3 concurrent Trino requests at a time
