@@ -588,13 +588,6 @@
     "query": "sum(SES_WEBHOOK_HANDLED_FAILED{tag_name0=\"failed\"})"
   },
   {
-    "display_name": "Total SES Webhook Received",
-    "query_name": "total_ses_webhook_received_12",
-    "section": "Email",
-    "metric_type": "total_count",
-    "query": "sum(SES_WEBHOOK_RECEIVED{tag_name0=\"received\"})"
-  },
-  {
     "display_name": "Email Send Success Rate",
     "query_name": "email_send_success_rate_30",
     "section": "Email Forwarder",
