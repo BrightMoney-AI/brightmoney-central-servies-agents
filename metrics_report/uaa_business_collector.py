@@ -345,7 +345,7 @@ async def _fetch_plaid_batch_historical_recency() -> list[BusinessMetric]:
         parts = []
         for c in cols:
             v = r.get(c)
-            parts.append(_fmt_ts(v) if c == "metric_calculated_time" else (str(v) if v is not None else "-"))
+            parts.append(_fmt_ts(v) if c == "metric_calculated_time" else (str(v) if v is not None else "N/A"))
         details.append("|".join(parts))
     return [BusinessMetric(
         display_name="Historical Recency (Last 2 Days)",
@@ -554,7 +554,7 @@ async def _fetch_plaid_force_refresh_daily() -> list[BusinessMetric]:
         metric = r.get("metric") or "-"
         count  = r.get("count")  or 0
         pct    = r.get("percentage")
-        pct_s  = f"{pct}%" if pct is not None else "-"
+        pct_s  = f"{pct}%" if pct is not None else "N/A"
         details.append(f"{metric}|{count:,}|{pct_s}")
         if "Success" in str(metric):
             success_count = int(count or 0)
@@ -701,6 +701,54 @@ async def _fetch_plaid_force_refresh_trend() -> list[BusinessMetric]:
     )]
 
 
+# ── Partner Cost Breakdown ────────────────────────────────────────────────────
+# Daily snapshot of costs per partner from cost_cube.
+# billing_type = ONE_TIME  → daily cost (per-transaction / usage charges)
+# billing_type = MONTHLY   → maintenance cost (recurring monthly fees)
+
+_TRINO_PARTNER_COSTS = """
+SELECT
+    partner,
+    ROUND(SUM(CASE WHEN billing_type = 'ONE_TIME' THEN cost ELSE 0 END), 2) AS daily_cost,
+    ROUND(SUM(CASE WHEN billing_type = 'MONTHLY'  THEN cost ELSE 0 END), 2) AS maintenance_cost
+FROM iceberg_db.cost_cube
+WHERE partner IN ('TU_CR','PLAID','EFX_IIG','TU_CCS','EFX_EPAY','EVOLVE','TELLER','EFX_CDS','FISERV')
+  AND DATE(run_date) = CURRENT_DATE
+GROUP BY partner
+ORDER BY partner
+"""
+
+
+async def _fetch_partner_costs() -> list[BusinessMetric]:
+    try:
+        rows = await execute_query(_TRINO_PARTNER_COSTS)
+    except Exception as exc:
+        log.error("Partner cost breakdown query failed: %s", exc)
+        return []
+    if not rows:
+        log.info("Partner costs: no data for today.")
+        return []
+
+    total_daily = 0.0
+    details = ["Partner|Daily Cost|Maintenance Cost"]
+    for row in rows:
+        partner     = str(row.get("partner") or "Unknown")
+        daily       = float(row.get("daily_cost")       or 0)
+        maintenance = float(row.get("maintenance_cost") or 0)
+        details.append(f"{partner}|${daily:,.2f}|${maintenance:,.2f}")
+        total_daily += daily
+
+    log.info("Partner costs: %d partner(s).", len(rows))
+    return [BusinessMetric(
+        display_name="Partner Cost Breakdown (Today)",
+        query_name="partner_costs",
+        section="Partner Costs",
+        metric_type="multi_col_table",
+        value=total_daily,
+        details=details,
+    )]
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 async def collect_uaa_business_metrics() -> list[BusinessMetric]:
@@ -732,6 +780,7 @@ async def collect_uaa_business_metrics() -> list[BusinessMetric]:
         _limited(_fetch_plaid_force_refresh_daily()),
         _limited(_fetch_plaid_force_refresh_errors()),
         _limited(_fetch_plaid_force_refresh_trend()),
+        _limited(_fetch_partner_costs()),
     )
 
     metrics: list[BusinessMetric] = [m for batch in (*fast, *plaid) for m in batch]

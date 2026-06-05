@@ -19,6 +19,7 @@ _SECTION_ORDER: list[str] = [
     "ALSM",
     "Plaid Batch Refresh",
     "Plaid Force Refresh",
+    "Partner Costs",
 ]
 
 _RATE_CRIT = 95.0   # success_rate below this → 🔴
@@ -107,7 +108,7 @@ def _render_multi_col_table(m: BusinessMetric) -> str:
         parts = [p.strip() for p in row.split("|")]
         # Pad or trim to match header column count
         while len(parts) < len(headers):
-            parts.append("-")
+            parts.append("N/A")
         lines.append("| " + " | ".join(parts[:len(headers)]) + " |")
     lines.append("")
     return "\n".join(lines)
