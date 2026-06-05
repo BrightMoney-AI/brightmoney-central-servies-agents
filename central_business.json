@@ -763,7 +763,9 @@
     "query_name": "endpoint_status_code_5xx_13",
     "section": "Webhook Gateway",
     "metric_type": "failure_count",
-    "query": "sum(increase(django_http_responses_total_by_status{name=~\"px-bwg-app-server-.*\", status=~\"5.*\"}[5m]))"
+    "query": "sum(increase(django_http_responses_total_by_status{name=~\"px-bwg-app-server-.*\", status=~\"5.*\"}[5m]))",
+    "crit_above": 1000,
+    "warn_above": 500
   },
   {
     "display_name": "Batch Event Failed Event Count",
