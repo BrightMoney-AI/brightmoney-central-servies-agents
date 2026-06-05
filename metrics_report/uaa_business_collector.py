@@ -535,12 +535,13 @@ async def _fetch_partner_costs() -> list[BusinessMetric]:
         return []
 
     total_daily = 0.0
-    details = ["Partner|Daily Cost|Maintenance Cost"]
+    details = ["Partner|One-time Cost|Maintenance Cost|Daily Total"]
     for row in rows:
-        partner     = str(row.get("partner") or "Unknown")
-        daily       = float(row.get("daily_cost")       or 0)
+        partner     = str(row.get("partner")          or "Unknown")
+        one_time    = float(row.get("one_time_cost")    or 0)
         maintenance = float(row.get("maintenance_cost") or 0)
-        details.append(f"{partner}|${daily:,.2f}|${maintenance:,.2f}")
+        daily       = float(row.get("daily_cost")       or 0)
+        details.append(f"{partner}|${one_time:,.2f}|${maintenance:,.2f}|${daily:,.2f}")
         total_daily += daily
 
     log.info("Partner costs: %d partner(s).", len(rows))
