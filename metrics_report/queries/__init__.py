@@ -1,20 +1,45 @@
 """
-L0 PromQL query builders.
+metrics_report/queries — PromQL query builders + SQL file loader.
 
-System health queries (per_server=True) return one value per matched instance
-via query_vector(). API queries (per_server=False) return a single aggregated
-value via query(). Per-endpoint queries (per_server=True, id_label="endpoint")
-use Django statsd metrics from job="platform_statsd_metrics".
+PromQL builders (build_api_queries, build_system_queries, etc.) are used by
+collector.py for L0 service health reports.
 
-  selector = 'name=~"p-uaa-em-.*|p-uaa-entity-manager.*", job="system_metrics"'
-  sys_queries = build_system_queries(selector, window="24h")
-  api_queries = build_api_queries(selector, window="24h")
-  ep_queries  = build_per_endpoint_queries(api_selector, endpoints=[...], method="POST", window="24h")
+SQL loaders (load_uaa, load_dp) are used by the business metric collectors to
+read .sql files from the queries/uaa/ and queries/dp/ subfolders.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
+
+# ── SQL file loaders ───────────────────────────────────────────────────────────
+
+_UAA = Path(__file__).parent / "uaa"
+_DP  = Path(__file__).parent / "dp"
+
+
+def load_uaa(name: str) -> str:
+    """Load a UAA SQL query by name from queries/uaa/<name>.sql."""
+    return (_UAA / f"{name}.sql").read_text()
+
+
+def load_dp(name: str) -> str:
+    """Load a Data Platform SQL query by name from queries/dp/<name>.sql."""
+    return (_DP / f"{name}.sql").read_text()
+
+
+# ── PromQL query builders ──────────────────────────────────────────────────────
+#
+# System health queries (per_server=True) return one value per matched instance
+# via query_vector(). API queries (per_server=False) return a single aggregated
+# value via query(). Per-endpoint queries (per_server=True, id_label="endpoint")
+# use Django statsd metrics from job="platform_statsd_metrics".
+#
+#   selector = 'name=~"p-uaa-em-.*|p-uaa-entity-manager.*", job="system_metrics"'
+#   sys_queries = build_system_queries(selector, window="24h")
+#   api_queries = build_api_queries(selector, window="24h")
+#   ep_queries  = build_per_endpoint_queries(api_selector, endpoints=[...], method="POST", window="24h")
 
 
 @dataclass(frozen=True)
@@ -117,7 +142,6 @@ def build_api_queries(
         return "{" + ", ".join(parts) + "}"
 
     def mk_lat(*extra: str) -> str:
-        # latency metric has no method label
         parts = base + list(extra)
         return "{" + ", ".join(parts) + "}"
 
@@ -186,7 +210,6 @@ def build_api_queries(
 #
 # All endpoints are discovered dynamically via `by (endpoint)`.
 # Noisy/internal endpoints are excluded via api_exclude_endpoints in services.json.
-
 
 def build_per_endpoint_queries(
     selector: str = "",

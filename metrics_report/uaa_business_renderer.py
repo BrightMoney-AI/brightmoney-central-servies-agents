@@ -17,10 +17,14 @@ _SECTION_ORDER: list[str] = [
     "Onboarding",
     "Account Linking",
     "ALSM",
+    "SAISM",
     "Plaid Batch Refresh",
     "Plaid Force Refresh",
     "Partner Costs",
+    "Txn Quality",
 ]
+
+# For latency metrics: lower is better so delta coloring is inverted vs counts
 
 _RATE_CRIT = 95.0   # success_rate below this → 🔴
 _RATE_WARN = 99.0   # success_rate below this → 🟡

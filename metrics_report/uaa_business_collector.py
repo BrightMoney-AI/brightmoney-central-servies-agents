@@ -11,7 +11,10 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
+from .queries import load_uaa
 from .trino_client import execute_query
+from .vm_client import VMClient
+from .config import settings
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +43,15 @@ def _fmt_ts(v) -> str:
     return s[:16]  # "2026-06-05 10:00" from "2026-06-05 10:00:00.000"
 
 
+def _fmt_float(v, decimals: int = 1) -> str:
+    if v is None:
+        return "N/A"
+    try:
+        return f"{float(v):.{decimals}f}"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
 # ── Onboarding Provider Sessions ──────────────────────────────────────────────
 # Counts total sessions and successful sessions per provider for D day vs D-1 day.
 # Provider is derived from session/event JSON in priority order:
@@ -47,65 +59,7 @@ def _fmt_ts(v) -> str:
 #   3. session_creation provider     4. routing_service provider_name
 # Only AKOYA, PLAID, DL_CAPITALONE are included.
 
-_TRINO_ONBOARDING_PROVIDER_SESSIONS = """
-WITH session_events AS (
-    SELECT
-        s.id               AS session_id,
-        s.created_at       AS session_created_at,
-        COALESCE(
-            json_extract_scalar(e.response,    '$.action_data.provider_data.provider'),
-            json_extract_scalar(s.session_data,'$.accounts.checking[0].aggregator'),
-            json_extract_scalar(s.session_data,'$.session_creation_on_provider_app_response.provider'),
-            json_extract_scalar(s.session_data,'$.routing_service_response.provider_name')
-        ) AS provider,
-        e.event_name
-    FROM iceberg_db.brightmoney_core_uaa__public__alsm_accountlinkingsession__current_view_presto s
-    JOIN iceberg_db.brightmoney_core_uaa__public__alsm_accountlinkingeventdata__current_view_presto e
-      ON e.account_linking_session_id = s.id
-    WHERE json_extract_scalar(s.session_data, '$.flow_data.flow_type')     = 'ONBOARDING'
-      AND json_extract_scalar(s.session_data, '$.flow_data.linking_for')   = 'CHECKING'
-      AND json_extract_scalar(s.session_data, '$.flow_data.linking_flow')  = 'ADD'
-      AND s.created_at >= CURRENT_DATE - INTERVAL '2' DAY
-),
-sessions_base AS (
-    SELECT
-        session_id,
-        session_created_at,
-        provider,
-        MAX(CASE WHEN event_name = 'ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT' THEN 1 ELSE 0 END) AS is_success
-    FROM session_events
-    GROUP BY session_id, session_created_at, provider
-),
-d_day AS (
-    SELECT
-        provider,
-        COUNT(*)          AS sessions,
-        SUM(is_success)   AS success_sessions
-    FROM sessions_base
-    WHERE DATE(session_created_at) = CURRENT_DATE
-      AND provider IN ('AKOYA', 'PLAID', 'DL_CAPITALONE')
-    GROUP BY provider
-),
-d_minus_1 AS (
-    SELECT
-        provider,
-        COUNT(*)          AS sessions,
-        SUM(is_success)   AS success_sessions
-    FROM sessions_base
-    WHERE DATE(session_created_at) = CURRENT_DATE - INTERVAL '1' DAY
-      AND provider IN ('AKOYA', 'PLAID', 'DL_CAPITALONE')
-    GROUP BY provider
-)
-SELECT
-    COALESCE(d.provider,          d1.provider)          AS provider,
-    COALESCE(d.sessions,          0)                    AS d_sessions,
-    COALESCE(d.success_sessions,  0)                    AS d_success,
-    COALESCE(d1.sessions,         0)                    AS d1_sessions,
-    COALESCE(d1.success_sessions, 0)                    AS d1_success
-FROM d_day d
-FULL OUTER JOIN d_minus_1 d1 ON d1.provider = d.provider
-ORDER BY COALESCE(d.provider, d1.provider)
-"""
+_TRINO_ONBOARDING_PROVIDER_SESSIONS = load_uaa("onboarding_provider_sessions")
 
 
 async def _fetch_onboarding_provider_sessions() -> list[BusinessMetric]:
@@ -130,7 +84,6 @@ async def _fetch_onboarding_provider_sessions() -> list[BusinessMetric]:
         d1_success  = int(row.get("d1_success")  or 0)
         d_pct  = (d_success  / d_sessions  * 100) if d_sessions  else 0.0
         d1_pct = (d1_success / d1_sessions * 100) if d1_sessions else 0.0
-        # Pipe-delimited row picked up by the renderer to build a Markdown table
         details.append(
             f"{provider}|{d_sessions}|{d_success} ({d_pct:.1f}%)|{d1_sessions}|{d1_success} ({d1_pct:.1f}%)"
         )
@@ -154,48 +107,7 @@ async def _fetch_onboarding_provider_sessions() -> list[BusinessMetric]:
 # (Onboarding vs Other), comparing the last 4 hours vs the same 4-hour window
 # 24 hours ago (yesterday).
 
-_TRINO_ACCOUNT_LINKING_BY_SOURCE = """
-WITH successful_sessions AS (
-    SELECT DISTINCT
-        s.id           AS session_id,
-        s.created_at,
-        JSON_EXTRACT_SCALAR(s.session_data, '$.flow_data.client_source') AS client_source,
-        CASE
-            WHEN JSON_EXTRACT_SCALAR(s.session_data, '$.flow_data.flow_type') = 'ONBOARDING'
-            THEN 'Onboarding'
-            ELSE 'Other'
-        END AS flow_type
-    FROM iceberg_db.brightmoney_core_uaa__public__alsm_accountlinkingsession__current_view_presto s
-    JOIN iceberg_db.brightmoney_core_uaa__public__alsm_accountlinkingeventdata__current_view_presto e
-        ON e.account_linking_session_id = s.id
-    WHERE e.event_name = 'ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT'
-      AND JSON_EXTRACT_SCALAR(s.session_data, '$.flow_data.client_source') IN ('web', 'android', 'ios')
-      AND s.created_at >= NOW() - INTERVAL '28' HOUR
-),
-today_agg AS (
-    SELECT client_source, flow_type, COUNT(*) AS sessions
-    FROM successful_sessions
-    WHERE created_at >= NOW() - INTERVAL '4' HOUR
-    GROUP BY client_source, flow_type
-),
-yesterday_agg AS (
-    SELECT client_source, flow_type, COUNT(*) AS sessions
-    FROM successful_sessions
-    WHERE created_at >= NOW() - INTERVAL '28' HOUR
-      AND created_at <  NOW() - INTERVAL '24' HOUR
-    GROUP BY client_source, flow_type
-)
-SELECT
-    COALESCE(t.client_source, y.client_source) AS client_source,
-    COALESCE(t.flow_type,     y.flow_type)     AS flow_type,
-    COALESCE(t.sessions,      0)               AS today_sessions,
-    COALESCE(y.sessions,      0)               AS yesterday_sessions
-FROM today_agg t
-FULL OUTER JOIN yesterday_agg y
-    ON  y.client_source = t.client_source
-    AND y.flow_type     = t.flow_type
-ORDER BY client_source, flow_type
-"""
+_TRINO_ACCOUNT_LINKING_BY_SOURCE = load_uaa("account_linking_by_source")
 
 
 async def _fetch_account_linking_by_source() -> list[BusinessMetric]:
@@ -213,13 +125,12 @@ async def _fetch_account_linking_by_source() -> list[BusinessMetric]:
     total_today = 0
 
     for row in rows:
-        source     = str(row.get("client_source") or "unknown")
-        flow       = str(row.get("flow_type")     or "Other")
-        today      = int(row.get("today_sessions")     or 0)
-        yesterday  = int(row.get("yesterday_sessions") or 0)
-        delta      = today - yesterday
-        delta_str  = f"+{delta}" if delta >= 0 else str(delta)
-        # Pipe-delimited: source | flow | today | yesterday | delta
+        source    = str(row.get("client_source") or "unknown")
+        flow      = str(row.get("flow_type")     or "Other")
+        today     = int(row.get("today_sessions")     or 0)
+        yesterday = int(row.get("yesterday_sessions") or 0)
+        delta     = today - yesterday
+        delta_str = f"+{delta}" if delta >= 0 else str(delta)
         details.append(f"{source}|{flow}|{today}|{yesterday}|{delta_str}")
         total_today += today
 
@@ -239,25 +150,7 @@ async def _fetch_account_linking_by_source() -> list[BusinessMetric]:
 # Computes p50/p75/p90/p95/p99 of hours since last_data_updated_at across all
 # accounts in plaid_batch_refresh_metadata. Lower = fresher data.
 
-_TRINO_PLAID_BATCH_RECENCY = """
-WITH recency_delta AS (
-    SELECT
-        DATE_DIFF('hour',
-            GREATEST(COALESCE(last_balance_force_fetched, last_data_updated_at), last_data_updated_at),
-            current_timestamp
-        ) AS delta_hrs
-    FROM uaa_db.plaid_batch_refresh_metadata
-    WHERE COALESCE(last_balance_force_fetched, last_data_updated_at) IS NOT NULL
-)
-SELECT
-    COUNT(*)                             AS number_of_accounts,
-    approx_percentile(delta_hrs, 0.50)  AS p50,
-    approx_percentile(delta_hrs, 0.75)  AS p75,
-    approx_percentile(delta_hrs, 0.90)  AS p90,
-    approx_percentile(delta_hrs, 0.95)  AS p95,
-    approx_percentile(delta_hrs, 0.99)  AS p99
-FROM recency_delta
-"""
+_TRINO_PLAID_BATCH_RECENCY = load_uaa("plaid_batch_recency")
 
 
 async def _fetch_plaid_batch_recency() -> list[BusinessMetric]:
@@ -268,12 +161,12 @@ async def _fetch_plaid_batch_recency() -> list[BusinessMetric]:
         return []
     if not rows:
         return []
-    r = rows[0]
-    p50      = r.get("p50")      or 0
-    p75      = r.get("p75")      or 0
-    p90      = r.get("p90")      or 0
-    p95      = r.get("p95")      or 0
-    p99      = r.get("p99")      or 0
+    r        = rows[0]
+    p50      = r.get("p50") or 0
+    p75      = r.get("p75") or 0
+    p90      = r.get("p90") or 0
+    p95      = r.get("p95") or 0
+    p99      = r.get("p99") or 0
     accounts = int(r.get("number_of_accounts") or 0)
     return [BusinessMetric(
         display_name="Data Recency (hrs)",
@@ -291,11 +184,7 @@ async def _fetch_plaid_batch_recency() -> list[BusinessMetric]:
 # ── Plaid Batch Refresh: Metadata Recency ─────────────────────────────────────
 # MIN recency (hours) across all run_timestamp rows — how fresh is the metadata.
 
-_TRINO_PLAID_BATCH_METADATA_RECENCY = """
-SELECT
-    MIN(DATE_DIFF('minute', run_timestamp, current_timestamp) / 60.0) AS recency_hrs
-FROM uaa_db.plaid_batch_refresh_metadata
-"""
+_TRINO_PLAID_BATCH_METADATA_RECENCY = load_uaa("plaid_batch_metadata_recency")
 
 
 async def _fetch_plaid_batch_metadata_recency() -> list[BusinessMetric]:
@@ -318,13 +207,7 @@ async def _fetch_plaid_batch_metadata_recency() -> list[BusinessMetric]:
 # ── Plaid Batch Refresh: Historical Recency ────────────────────────────────────
 # Last 2 days of pre-computed recency percentiles from the metrics table.
 
-_TRINO_PLAID_BATCH_HISTORICAL_RECENCY = """
-SELECT *
-FROM uaa_db.plaid_batch_refresh_recency_metrics
-WHERE institution_name = 'Overall'
-  AND metric_calculated_time >= date_add('day', -2, current_timestamp)
-ORDER BY metric_calculated_time DESC
-"""
+_TRINO_PLAID_BATCH_HISTORICAL_RECENCY = load_uaa("plaid_batch_historical_recency")
 
 _RECENCY_COLS = ["metric_calculated_time", "p50", "p75", "p90", "p95", "p99", "number_of_accounts"]
 
@@ -337,9 +220,11 @@ async def _fetch_plaid_batch_historical_recency() -> list[BusinessMetric]:
         return []
     if not rows:
         return []
-    # Use expected columns if present, otherwise fall back to all keys
-    cols = [c for c in _RECENCY_COLS if c in rows[0]] or [k for k in rows[0] if k != "institution_name"]
-    header = "|".join(c.replace("metric_calculated_time", "Time").replace("number_of_accounts", "Accounts") for c in cols)
+    cols   = [c for c in _RECENCY_COLS if c in rows[0]] or [k for k in rows[0] if k != "institution_name"]
+    header = "|".join(
+        c.replace("metric_calculated_time", "Time").replace("number_of_accounts", "Accounts")
+        for c in cols
+    )
     details = [header]
     for r in rows[:24]:
         parts = []
@@ -360,40 +245,7 @@ async def _fetch_plaid_batch_historical_recency() -> list[BusinessMetric]:
 # ── Plaid Batch Refresh: Error Reasons ────────────────────────────────────────
 # Top error reasons (by item count) in the last 24 hours, grouped by hour.
 
-_TRINO_PLAID_BATCH_REFRESH_ERRORS = """
-WITH error_data AS (
-    SELECT
-        item_pid,
-        date_trunc('hour', CAST(from_iso8601_timestamp(bright_updated_at) AS TIMESTAMP)) AS hour,
-        CASE
-            WHEN stitch_failed_reason LIKE 'no valid subtype%'                                           THEN 'no valid subtype'
-            WHEN stitch_failed_reason LIKE 'BETA item account mapped response%'                          THEN 'BETA item no mapped account'
-            WHEN stitch_failed_reason LIKE 'ALPHA item account mapped response%'                         THEN 'ALPHA item no mapped account'
-            WHEN stitch_failed_reason LIKE 'failed:\"api error:ITEM_LOGIN_REQUIRED\"%'                   THEN 'ITEM_LOGIN_REQUIRED'
-            WHEN stitch_failed_reason LIKE 'failed:\"api error:NO_ACCOUNTS\"%'                           THEN 'NO_ACCOUNTS'
-            WHEN stitch_failed_reason LIKE 'failed:\"api error:ITEM_NOT_FOUND\"%'                        THEN 'ITEM_NOT_FOUND'
-            WHEN stitch_failed_reason LIKE 'failed:\"api error:INTERNAL_SERVER_ERROR\"'                  THEN 'INTERNAL_SERVER_ERROR'
-            WHEN stitch_failed_reason LIKE 'failed:\"api error:ITEM_NOT_SUPPORTED\"'                     THEN 'ITEM_NOT_SUPPORTED'
-            WHEN stitch_failed_reason LIKE 'failed:\"api error:MFA_NOT_SUPPORTED\"'                      THEN 'MFA_NOT_SUPPORTED'
-            WHEN stitch_failed_reason LIKE 'failed:\"errors: error in fetching Item ITEM_NOT_FOUND\"'    THEN 'ITEM_NOT_FOUND'
-            WHEN stitch_failed_reason LIKE 'failed:\"errors: error in fetching Item ITEM_GET_LIMIT\"'    THEN 'ITEM_GET_LIMIT'
-            WHEN stitch_failed_reason LIKE 'failed:\"errors: error in fetching Item INTERNAL_SERVER_ERROR\"' THEN 'INTERNAL_SERVER_ERROR'
-            WHEN stitch_failed_reason LIKE 'failed:\"last_successful_updated_on < last_balance_force_fetched%' THEN 'already have latest balance'
-            WHEN stitch_failed_reason LIKE 'failed:\"no accounts%'                                       THEN 'no accounts from API'
-            WHEN stitch_failed_reason LIKE 'escalated%'                                                  THEN 'escalated_accounts'
-            ELSE stitch_failed_reason
-        END AS reason
-    FROM uaa_db.plaid_batch_refresh_error_data
-    WHERE CAST(from_iso8601_timestamp(bright_updated_at) AS TIMESTAMP) >= CURRENT_DATE - INTERVAL '1' DAY
-)
-SELECT
-    hour,
-    reason,
-    COUNT(DISTINCT item_pid) AS counts
-FROM error_data
-GROUP BY hour, reason
-ORDER BY hour DESC, counts DESC
-"""
+_TRINO_PLAID_BATCH_REFRESH_ERRORS = load_uaa("plaid_batch_refresh_errors")
 
 
 async def _fetch_plaid_batch_refresh_errors() -> list[BusinessMetric]:
@@ -421,29 +273,10 @@ async def _fetch_plaid_batch_refresh_errors() -> list[BusinessMetric]:
     )]
 
 
-# ── Plaid Batch Refresh: Success / Failure Trend ──────────────────────────────
+# ── Plaid Batch Refresh: Hourly Health Trend ──────────────────────────────────
 # Hourly success% and error% for the last 24 hours.
 
-_TRINO_PLAID_BATCH_TREND = """
-WITH error_data AS (
-    SELECT CAST(from_iso8601_timestamp(bright_updated_at) AS TIMESTAMP) AS ts, 'error' AS status
-    FROM uaa_db.plaid_batch_refresh_error_data
-    WHERE CAST(from_iso8601_timestamp(bright_updated_at) AS TIMESTAMP) >= CURRENT_DATE - INTERVAL '1' DAY
-),
-success_data AS (
-    SELECT CAST(from_iso8601_timestamp(bright_updated_at) AS TIMESTAMP) AS ts, 'success' AS status
-    FROM uaa_db.plaid_batch_refresh_data
-    WHERE CAST(from_iso8601_timestamp(bright_updated_at) AS TIMESTAMP) >= CURRENT_DATE - INTERVAL '1' DAY
-),
-combined AS (SELECT * FROM success_data UNION ALL SELECT * FROM error_data)
-SELECT
-    date_trunc('hour', ts)                                                       AS metric_hour,
-    ROUND(100.0 * SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) / COUNT(*), 2) AS success_pct,
-    ROUND(100.0 * SUM(CASE WHEN status = 'error'   THEN 1 ELSE 0 END) / COUNT(*), 2) AS error_pct
-FROM combined
-GROUP BY date_trunc('hour', ts)
-ORDER BY metric_hour DESC
-"""
+_TRINO_PLAID_BATCH_TREND = load_uaa("plaid_batch_trend")
 
 
 async def _fetch_plaid_batch_trend() -> list[BusinessMetric]:
@@ -471,73 +304,7 @@ async def _fetch_plaid_batch_trend() -> list[BusinessMetric]:
 # ── Plaid Force Refresh: Daily Metrics ────────────────────────────────────────
 # Today's summary: total, rejected, eligible, success, error counts and %.
 
-_TRINO_PLAID_FORCE_REFRESH_DAILY = """
-WITH summary AS (
-    SELECT state, COUNT(DISTINCT item_pid) AS item_counts
-    FROM uaa_db.plaid_force_refresh_metadata
-    WHERE run_date = CURRENT_DATE
-    GROUP BY state
-    UNION ALL
-    SELECT 'Total' AS state, COUNT(DISTINCT item_pid) AS item_counts
-    FROM uaa_db.plaid_force_refresh_metadata
-    WHERE run_date = CURRENT_DATE
-),
-totals AS (
-    SELECT
-        MAX(CASE WHEN state = 'Total'                              THEN item_counts END) AS total_items,
-        MAX(CASE WHEN state = 'NOT_FOUND_IN_PLAID_METADATA'        THEN item_counts END) AS not_found,
-        MAX(CASE WHEN state = 'ELIGIBLE_FOR_FORCE_REFRESH'         THEN item_counts END) AS eligible,
-        MAX(CASE WHEN state = 'REJECTED_DUE_TO_RECENCY'            THEN item_counts END) AS rejected_recency,
-        MAX(CASE WHEN state = 'REJECTED_DUE_TO_NULL_LAST_UPDATE'   THEN item_counts END) AS rejected_null
-    FROM summary
-),
-success_items AS (
-    SELECT DISTINCT item_pid
-    FROM uaa_db.plaid_force_refresh_data
-    WHERE CAST(from_iso8601_timestamp(bright_updated_at) AS DATE) = CURRENT_DATE
-),
-error_items AS (
-    SELECT DISTINCT item_pid
-    FROM uaa_db.plaid_force_refresh_error_data
-    WHERE CAST(from_iso8601_timestamp(bright_updated_at) AS DATE) = CURRENT_DATE
-),
-unique_errors AS (
-    SELECT item_pid FROM error_items
-    WHERE item_pid NOT IN (SELECT item_pid FROM success_items)
-)
-SELECT 'Total Items'                                          AS metric,
-       total_items                                            AS count,
-       CAST(NULL AS DOUBLE)                                   AS percentage
-FROM totals
-UNION ALL
-SELECT 'Rejected (Recency + Null Last Update)',
-       (COALESCE(rejected_recency,0) + COALESCE(rejected_null,0)),
-       ROUND(((COALESCE(rejected_recency,0) + COALESCE(rejected_null,0)) * 100.0)
-             / NULLIF(total_items - COALESCE(not_found,0), 0), 2)
-FROM totals
-UNION ALL
-SELECT 'Eligible for Force Refresh',
-       eligible,
-       ROUND((COALESCE(eligible,0) * 100.0) / NULLIF(total_items - COALESCE(not_found,0), 0), 2)
-FROM totals
-UNION ALL
-SELECT 'Success',
-       COUNT(DISTINCT item_pid),
-       ROUND((COUNT(DISTINCT item_pid) * 100.0) / NULLIF((SELECT eligible FROM totals), 0), 2)
-FROM success_items
-UNION ALL
-SELECT 'Error (unique failures)',
-       COUNT(DISTINCT item_pid),
-       ROUND((COUNT(DISTINCT item_pid) * 100.0) / NULLIF((SELECT eligible FROM totals), 0), 2)
-FROM unique_errors
-ORDER BY CASE metric
-    WHEN 'Total Items'                              THEN 1
-    WHEN 'Rejected (Recency + Null Last Update)'   THEN 2
-    WHEN 'Eligible for Force Refresh'               THEN 3
-    WHEN 'Success'                                  THEN 4
-    ELSE 5
-END
-"""
+_TRINO_PLAID_FORCE_REFRESH_DAILY = load_uaa("plaid_force_refresh_daily")
 
 
 async def _fetch_plaid_force_refresh_daily() -> list[BusinessMetric]:
@@ -571,41 +338,7 @@ async def _fetch_plaid_force_refresh_daily() -> list[BusinessMetric]:
 # ── Plaid Force Refresh: Error Reasons ────────────────────────────────────────
 # Top error reasons per day for the last 7 days.
 
-_TRINO_PLAID_FORCE_REFRESH_ERRORS = """
-WITH error_data AS (
-    SELECT
-        item_pid,
-        CAST(from_iso8601_timestamp(bright_updated_at) AS DATE) AS bright_date,
-        CASE
-            WHEN stitch_failed_reason LIKE 'no valid subtype%'                                           THEN 'no valid subtype'
-            WHEN stitch_failed_reason LIKE 'failed:\"api error:INSTITUTION_NOT_RESPONDING\"%'            THEN 'INSTITUTION_NOT_RESPONDING'
-            WHEN stitch_failed_reason LIKE 'failed:\"api error:ITEM_LOGIN_REQUIRED\"%'                   THEN 'ITEM_LOGIN_REQUIRED'
-            WHEN stitch_failed_reason LIKE 'failed:\"api error:NO_ACCOUNTS\"%'                           THEN 'NO_ACCOUNTS'
-            WHEN stitch_failed_reason LIKE 'failed:\"api error:ITEM_NOT_FOUND\"%'                        THEN 'ITEM_NOT_FOUND'
-            WHEN stitch_failed_reason LIKE 'failed:\"api error:INTERNAL_SERVER_ERROR\"'                  THEN 'INTERNAL_SERVER_ERROR'
-            WHEN stitch_failed_reason LIKE 'failed:\"api error:ITEM_NOT_SUPPORTED\"'                     THEN 'ITEM_NOT_SUPPORTED'
-            WHEN stitch_failed_reason LIKE 'failed:\"api error:MFA_NOT_SUPPORTED\"'                      THEN 'MFA_NOT_SUPPORTED'
-            WHEN stitch_failed_reason LIKE 'failed:\"api error:INVALID_FIELD\"'                          THEN 'INVALID_FIELD'
-            WHEN stitch_failed_reason LIKE 'failed:\"api error:ACCESS_NOT_GRANTED\"'                     THEN 'ACCESS_NOT_GRANTED'
-            WHEN stitch_failed_reason LIKE 'failed:\"errors: error in fetching Item ITEM_NOT_FOUND\"'    THEN 'ITEM_NOT_FOUND'
-            WHEN stitch_failed_reason LIKE 'failed:\"errors: error in fetching Item ITEM_GET_LIMIT\"'    THEN 'ITEM_GET_LIMIT'
-            WHEN stitch_failed_reason LIKE 'failed:\"errors: error in fetching Item INTERNAL_SERVER_ERROR\"' THEN 'INTERNAL_SERVER_ERROR'
-            WHEN stitch_failed_reason LIKE 'failed:\"no accounts%'                                       THEN 'no accounts from API'
-            WHEN stitch_failed_reason LIKE 'escalated%'                                                  THEN 'escalated_accounts'
-            ELSE stitch_failed_reason
-        END AS reason
-    FROM uaa_db.plaid_force_refresh_error_data
-    WHERE CAST(from_iso8601_timestamp(bright_updated_at) AS TIMESTAMP) >= CURRENT_DATE - INTERVAL '7' DAY
-      AND CAST(from_iso8601_timestamp(bright_updated_at) AS TIMESTAMP) >= TIMESTAMP '2025-01-06'
-)
-SELECT
-    bright_date,
-    reason,
-    COUNT(DISTINCT item_pid) AS counts
-FROM error_data
-GROUP BY bright_date, reason
-ORDER BY bright_date DESC, counts DESC
-"""
+_TRINO_PLAID_FORCE_REFRESH_ERRORS = load_uaa("plaid_force_refresh_errors")
 
 
 async def _fetch_plaid_force_refresh_errors() -> list[BusinessMetric]:
@@ -636,47 +369,7 @@ async def _fetch_plaid_force_refresh_errors() -> list[BusinessMetric]:
 # ── Plaid Force Refresh: Success / Failure Trend ──────────────────────────────
 # Daily success% and error% for the last 7 days.
 
-_TRINO_PLAID_FORCE_REFRESH_TREND = """
-WITH error_raw AS (
-    SELECT CAST(from_iso8601_timestamp(bright_updated_at) AS DATE) AS bright_date, item_pid
-    FROM uaa_db.plaid_force_refresh_error_data
-    WHERE CAST(from_iso8601_timestamp(bright_updated_at) AS TIMESTAMP) >= CURRENT_DATE - INTERVAL '7' DAY
-      AND CAST(from_iso8601_timestamp(bright_updated_at) AS TIMESTAMP) >= TIMESTAMP '2025-01-09'
-),
-success_raw AS (
-    SELECT CAST(from_iso8601_timestamp(bright_updated_at) AS DATE) AS bright_date, item_pid
-    FROM uaa_db.plaid_force_refresh_data
-    WHERE CAST(from_iso8601_timestamp(bright_updated_at) AS TIMESTAMP) >= CURRENT_DATE - INTERVAL '7' DAY
-      AND CAST(from_iso8601_timestamp(bright_updated_at) AS TIMESTAMP) >= TIMESTAMP '2025-01-09'
-),
-unique_errors AS (
-    SELECT bright_date, COUNT(DISTINCT item_pid) AS error_count
-    FROM error_raw
-    WHERE item_pid NOT IN (SELECT item_pid FROM success_raw)
-    GROUP BY bright_date
-),
-unique_success AS (
-    SELECT bright_date, COUNT(DISTINCT item_pid) AS success_count
-    FROM success_raw
-    GROUP BY bright_date
-),
-eligible AS (
-    SELECT run_date AS bright_date, COUNT(DISTINCT item_pid) AS total_count
-    FROM uaa_db.plaid_force_refresh_metadata
-    WHERE run_date >= CURRENT_DATE - INTERVAL '7' DAY
-      AND run_date >= DATE '2025-01-09'
-      AND state = 'ELIGIBLE_FOR_FORCE_REFRESH'
-    GROUP BY run_date
-)
-SELECT
-    e.bright_date,
-    ROUND((COALESCE(us.success_count, 0) * 100.0) / NULLIF(e.total_count, 0), 2) AS success_pct,
-    ROUND((COALESCE(ue.error_count,   0) * 100.0) / NULLIF(e.total_count, 0), 2) AS error_pct
-FROM eligible e
-LEFT JOIN unique_errors  ue ON e.bright_date = ue.bright_date
-LEFT JOIN unique_success us ON e.bright_date = us.bright_date
-ORDER BY e.bright_date DESC
-"""
+_TRINO_PLAID_FORCE_REFRESH_TREND = load_uaa("plaid_force_refresh_trend")
 
 
 async def _fetch_plaid_force_refresh_trend() -> list[BusinessMetric]:
@@ -701,22 +394,134 @@ async def _fetch_plaid_force_refresh_trend() -> list[BusinessMetric]:
     )]
 
 
+# ── ALSM Latency (P99) ────────────────────────────────────────────────────────
+# End-to-end latency from LINKING_SUCCESS_EVENT to
+# ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT for PLAID and DL_CAPITALONE at P99.
+# Value is in seconds (raw metric is milliseconds, divided by 1000).
+# Compares today's value vs the same instant 24 hours ago.
+
+def _alsm_latency_promql(aggregator: str) -> str:
+    return (
+        f'sum('
+        f'alsm_event_time_diff_metrics{{'
+        f'environment="prod",'
+        f'aggregator="{aggregator}",'
+        f'quantile="0.99",'
+        f'event1="LINKING_SUCCESS_EVENT",'
+        f'event2="ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT"'
+        f'}}/1000)'
+    )
+
+
+async def _fetch_alsm_latency() -> list[BusinessMetric]:
+    aggregators = ["PLAID", "DL_CAPITALONE"]
+    try:
+        async with VMClient(settings.vm_base_url) as vm:
+            queries = []
+            for agg in aggregators:
+                q = _alsm_latency_promql(agg)
+                queries += [vm.query(q), vm.query(f"{q} offset 24h")]
+            results = await asyncio.gather(*queries)
+    except Exception as exc:
+        log.error("ALSM latency query failed: %s", exc)
+        return []
+
+    details    = ["Aggregator|Today P99|Yesterday P99|Change"]
+    best_today = 0.0
+
+    for i, agg in enumerate(aggregators):
+        today_raw, yesterday_raw = results[i * 2], results[i * 2 + 1]
+        if today_raw is None and yesterday_raw is None:
+            continue
+        today_s     = float(today_raw)     if today_raw     is not None else 0.0
+        yesterday_s = float(yesterday_raw) if yesterday_raw is not None else 0.0
+        delta       = today_s - yesterday_s
+        delta_str   = f"+{delta:.1f}s" if delta >= 0 else f"{delta:.1f}s"
+        delta_fmt   = f"🔴 {delta_str}" if delta > 0 else f"🟢 {delta_str}"
+        details.append(f"{agg}|{today_s:.1f}s|{yesterday_s:.1f}s|{delta_fmt}")
+        best_today  = max(best_today, today_s)
+        log.info("ALSM latency [%s]: today=%.1fs yesterday=%.1fs", agg, today_s, yesterday_s)
+
+    if len(details) == 1:
+        log.info("ALSM latency: no data returned for any aggregator.")
+        return []
+
+    return [BusinessMetric(
+        display_name="ALSM Latency — P99 (LINKING_SUCCESS → ACCOUNTS_CREATED)",
+        query_name="alsm_latency",
+        section="ALSM",
+        metric_type="multi_col_table",
+        value=best_today,
+        details=details,
+    )]
+
+
+# ── SAISM Latency (P99) ───────────────────────────────────────────────────────
+# End-to-end latency from ACCOUNTS_INGESTION_START_EVENT to
+# ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT for CRBAA and BRIGHT at P99.
+
+def _saism_latency_promql(aggregator: str) -> str:
+    return (
+        f'sum('
+        f'saism_event_time_diff_metrics{{'
+        f'environment="prod",'
+        f'aggregator="{aggregator}",'
+        f'quantile="0.99",'
+        f'event1="ACCOUNTS_INGESTION_START_EVENT",'
+        f'event2="ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT"'
+        f'}}/1000)'
+    )
+
+
+async def _fetch_saism_latency() -> list[BusinessMetric]:
+    aggregators = ["CRBAA", "BRIGHT"]
+    try:
+        async with VMClient(settings.vm_base_url) as vm:
+            queries = []
+            for agg in aggregators:
+                q = _saism_latency_promql(agg)
+                queries += [vm.query(q), vm.query(f"{q} offset 24h")]
+            results = await asyncio.gather(*queries)
+    except Exception as exc:
+        log.error("SAISM latency query failed: %s", exc)
+        return []
+
+    details    = ["Aggregator|Today P99|Yesterday P99|Change"]
+    best_today = 0.0
+
+    for i, agg in enumerate(aggregators):
+        today_raw, yesterday_raw = results[i * 2], results[i * 2 + 1]
+        if today_raw is None and yesterday_raw is None:
+            continue
+        today_s     = float(today_raw)     if today_raw     is not None else 0.0
+        yesterday_s = float(yesterday_raw) if yesterday_raw is not None else 0.0
+        delta       = today_s - yesterday_s
+        delta_str   = f"+{delta:.1f}s" if delta >= 0 else f"{delta:.1f}s"
+        delta_fmt   = f"🔴 {delta_str}" if delta > 0 else f"🟢 {delta_str}"
+        details.append(f"{agg}|{today_s:.1f}s|{yesterday_s:.1f}s|{delta_fmt}")
+        best_today  = max(best_today, today_s)
+        log.info("SAISM latency [%s]: today=%.1fs yesterday=%.1fs", agg, today_s, yesterday_s)
+
+    if len(details) == 1:
+        log.info("SAISM latency: no data returned for any aggregator.")
+        return []
+
+    return [BusinessMetric(
+        display_name="SAISM Latency — P99 (ACCOUNTS_INGESTION_START → ACCOUNTS_CREATED)",
+        query_name="saism_latency",
+        section="SAISM",
+        metric_type="multi_col_table",
+        value=best_today,
+        details=details,
+    )]
+
+
 # ── Partner Cost Breakdown ────────────────────────────────────────────────────
 # Daily snapshot of costs per partner from cost_cube.
 # billing_type = ONE_TIME  → daily cost (per-transaction / usage charges)
 # billing_type = MONTHLY   → maintenance cost (recurring monthly fees)
 
-_TRINO_PARTNER_COSTS = """
-SELECT
-    partner,
-    ROUND(SUM(CASE WHEN billing_type = 'ONE_TIME' THEN cost ELSE 0 END), 2) AS daily_cost,
-    ROUND(SUM(CASE WHEN billing_type = 'MONTHLY'  THEN cost ELSE 0 END), 2) AS maintenance_cost
-FROM iceberg_db.cost_cube
-WHERE partner IN ('TU_CR','PLAID','EFX_IIG','TU_CCS','EFX_EPAY','EVOLVE','TELLER','EFX_CDS','FISERV')
-  AND DATE(run_date) = CURRENT_DATE
-GROUP BY partner
-ORDER BY partner
-"""
+_TRINO_PARTNER_COSTS = load_uaa("partner_costs")
 
 
 async def _fetch_partner_costs() -> list[BusinessMetric]:
@@ -730,12 +535,13 @@ async def _fetch_partner_costs() -> list[BusinessMetric]:
         return []
 
     total_daily = 0.0
-    details = ["Partner|Daily Cost|Maintenance Cost"]
+    details = ["Partner|One-time Cost|Maintenance Cost|Daily Total"]
     for row in rows:
-        partner     = str(row.get("partner") or "Unknown")
-        daily       = float(row.get("daily_cost")       or 0)
+        partner     = str(row.get("partner")          or "Unknown")
+        one_time    = float(row.get("one_time_cost")    or 0)
         maintenance = float(row.get("maintenance_cost") or 0)
-        details.append(f"{partner}|${daily:,.2f}|${maintenance:,.2f}")
+        daily       = float(row.get("daily_cost")       or 0)
+        details.append(f"{partner}|${one_time:,.2f}|${maintenance:,.2f}|${daily:,.2f}")
         total_daily += daily
 
     log.info("Partner costs: %d partner(s).", len(rows))
@@ -749,22 +555,62 @@ async def _fetch_partner_costs() -> list[BusinessMetric]:
     )]
 
 
+# ── Txn Quality Metrics ───────────────────────────────────────────────────────
+# Per account-creation cohort (last 2 days) × provider (All / PLAID / DL_CAPITALONE):
+#   - transaction duration avg and P95 (days)
+#   - transaction count avg and P95
+# Uses a tall/unpivoted layout — one row per (date, provider).
+
+_TRINO_TXN_QUALITY_METRICS = load_uaa("txn_quality_metrics")
+
+
+async def _fetch_txn_quality_metrics() -> list[BusinessMetric]:
+    try:
+        rows = await execute_query(_TRINO_TXN_QUALITY_METRICS)
+    except Exception as exc:
+        log.error("Txn quality metrics query failed: %s", exc)
+        return []
+    if not rows:
+        log.info("Txn quality metrics: no data returned.")
+        return []
+
+    details = ["Date|Provider|Avg Dur (days)|P95 Dur (days)|Avg Txn Count|P95 Txn Count"]
+    for r in rows:
+        date_str = str(r.get("cohort_date") or "N/A")
+        provider = str(r.get("provider")    or "N/A")
+        avg_dur  = _fmt_float(r.get("avg_txn_duration_days"))
+        p95_dur  = _fmt_float(r.get("p95_txn_duration_days"), 0)
+        avg_cnt  = _fmt_float(r.get("avg_txn_count"))
+        p95_cnt  = _fmt_float(r.get("p95_txn_count"), 0)
+        details.append(f"{date_str}|{provider}|{avg_dur}|{p95_dur}|{avg_cnt}|{p95_cnt}")
+
+    log.info("Txn quality metrics: %d row(s) (date × provider).", len(rows))
+    return [BusinessMetric(
+        display_name="Txn Quality by Account Cohort",
+        query_name="txn_quality",
+        section="Txn Quality",
+        metric_type="multi_col_table",
+        value=float(rows[0].get("avg_txn_duration_days") or 0),
+        details=details,
+    )]
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 async def collect_uaa_business_metrics() -> list[BusinessMetric]:
-    """Collect all UAA business metrics from Trino.
+    """Collect all UAA business metrics from Trino and VictoriaMetrics.
 
-    Existing ALSM/onboarding queries run fully concurrently.
-    Plaid queries run with a concurrency cap of 3 to avoid saturating
-    the Trino queue (which triggers the 15s–45s retry backoff).
+    Fast queries (HTTP + lightweight Trino) run fully concurrently.
+    Plaid/heavy Trino queries run with a concurrency cap of 3 to avoid
+    saturating the Trino queue (which triggers 15s–45s retry backoff).
     """
-    # Fast ALSM / account-linking queries — fully concurrent
     fast = await asyncio.gather(
         _fetch_onboarding_provider_sessions(),
         _fetch_account_linking_by_source(),
+        _fetch_alsm_latency(),
+        _fetch_saism_latency(),
     )
 
-    # Plaid queries — limit to 3 concurrent Trino requests at a time
     sem = asyncio.Semaphore(3)
 
     async def _limited(coro):
@@ -781,6 +627,7 @@ async def collect_uaa_business_metrics() -> list[BusinessMetric]:
         _limited(_fetch_plaid_force_refresh_errors()),
         _limited(_fetch_plaid_force_refresh_trend()),
         _limited(_fetch_partner_costs()),
+        _limited(_fetch_txn_quality_metrics()),
     )
 
     metrics: list[BusinessMetric] = [m for batch in (*fast, *plaid) for m in batch]
