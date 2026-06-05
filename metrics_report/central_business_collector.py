@@ -26,6 +26,11 @@ class BusinessMetric:
     section: str
     metric_type: str   # "success_rate" | "failure_count" | "total_count" | "rate"
     value: float
+    # Optional per-metric flag thresholds (see central_business.json)
+    warn_below: Optional[float] = None   # success_rate: flag if value < this
+    crit_below: Optional[float] = None   # success_rate: critical if value < this
+    warn_above: Optional[float] = None   # failure_count: flag if value > this
+    crit_above: Optional[float] = None   # failure_count: critical if value > this
 
 
 async def collect_business_metrics(vm: VMClient) -> list[BusinessMetric]:
@@ -51,6 +56,10 @@ async def collect_business_metrics(vm: VMClient) -> list[BusinessMetric]:
             section=entry.get("section", "Other"),
             metric_type=entry.get("metric_type", "total_count"),
             value=val,
+            warn_below=entry.get("warn_below"),
+            crit_below=entry.get("crit_below"),
+            warn_above=entry.get("warn_above"),
+            crit_above=entry.get("crit_above"),
         )
 
     results: list[Optional[BusinessMetric]] = await asyncio.gather(

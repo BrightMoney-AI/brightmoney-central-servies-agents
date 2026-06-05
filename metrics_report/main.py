@@ -16,6 +16,7 @@ Services: ems.json (EMS dashboard) + services.json (general) are merged automati
 
   # Fire a report for one group only
   python -m metrics_report.main --now --group "Central Services"
+  python -m metrics_report.main --now "Central Services"   # same, positional shorthand
 """
 import argparse
 import asyncio
@@ -54,9 +55,13 @@ if __name__ == "__main__":
     parser.add_argument("--now", action="store_true", help="Fire report immediately and exit")
     parser.add_argument("--group", metavar="GROUP", default=None,
                         help='Limit to one report_group, e.g. "Central Services"')
+    parser.add_argument("group_name", nargs="?", default=None,
+                        help=argparse.SUPPRESS)  # convenience: --now "Central Services"
     args = parser.parse_args()
 
+    group = args.group or args.group_name
+
     if args.now:
-        asyncio.run(_now(args.group))
+        asyncio.run(_now(group))
     else:
-        asyncio.run(_scheduled(args.group))
+        asyncio.run(_scheduled(group))

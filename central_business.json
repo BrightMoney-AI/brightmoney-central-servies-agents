@@ -18,7 +18,9 @@
     "query_name": "mixpanel_single_events_failed_28",
     "section": "Mixpanel",
     "metric_type": "failure_count",
-    "query": "sum(MIXPANEL_SINGLE_EVENT_FAILED)"
+    "query": "sum(MIXPANEL_SINGLE_EVENT_FAILED)",
+    "warn_above": 10000,
+    "crit_above": 10000
   },
   {
     "display_name": "Mixpanel Batch Event Success Rate",
@@ -396,14 +398,18 @@
     "query_name": "app_event_success_rate_12",
     "section": "Snap",
     "metric_type": "success_rate",
-    "query": "round(sum(rate(SNAPCHAT_CONVERSIONS_APP_EVENT{tag_name1='success',name='p-narada-snap-worker-01'}[5m])) * 100 / sum(rate(SNAPCHAT_CONVERSIONS_APP_EVENT{tag_name1='total',name='p-narada-snap-worker-01'}[5m])), 0.01)"
+    "query": "round(sum(rate(SNAPCHAT_CONVERSIONS_APP_EVENT{tag_name1='success',name='p-narada-snap-worker-01'}[5m])) * 100 / sum(rate(SNAPCHAT_CONVERSIONS_APP_EVENT{tag_name1='total',name='p-narada-snap-worker-01'}[5m])), 0.01)",
+    "warn_below": 50,
+    "crit_below": 50
   },
   {
     "display_name": "Web Event Success Rate",
     "query_name": "web_event_success_rate_14",
     "section": "Snap",
     "metric_type": "success_rate",
-    "query": "round(sum(rate(SNAPCHAT_CONVERSIONS_WEB_EVENT{tag_name1='success',name='p-narada-snap-worker-01'}[5m])) * 100 / sum(rate(SNAPCHAT_CONVERSIONS_WEB_EVENT{tag_name1='total',name='p-narada-snap-worker-01'}[5m])), 0.01)"
+    "query": "round(sum(rate(SNAPCHAT_CONVERSIONS_WEB_EVENT{tag_name1='success',name='p-narada-snap-worker-01'}[5m])) * 100 / sum(rate(SNAPCHAT_CONVERSIONS_WEB_EVENT{tag_name1='total',name='p-narada-snap-worker-01'}[5m])), 0.01)",
+    "warn_below": 50,
+    "crit_below": 50
   },
   {
     "display_name": "DB Interface Error Rate",
@@ -466,7 +472,9 @@
     "query_name": "single_event_success_rate_20",
     "section": "CleverTap",
     "metric_type": "success_rate",
-    "query": "round(sum(rate(CLEVERTAP_SINGLE_EVENT[5m])) * 100 / (sum(rate(CLEVERTAP_SINGLE_EVENT[5m])) + sum(rate(CLEVERTAP_SINGLE_EVENT_FAILED[5m]))), 0.01)"
+    "query": "round(sum(rate(CLEVERTAP_SINGLE_EVENT[5m])) * 100 / (sum(rate(CLEVERTAP_SINGLE_EVENT[5m])) + sum(rate(CLEVERTAP_SINGLE_EVENT_FAILED[5m]))), 0.01)",
+    "warn_below": 96,
+    "crit_below": 90
   },
   {
     "display_name": "Forward Event Success Rate",
@@ -501,7 +509,9 @@
     "query_name": "single_event_flow_publish_event_success_rate_41",
     "section": "CleverTap",
     "metric_type": "success_rate",
-    "query": "round(sum(increase(CLEVERTAP_FLOW_PUBLISH_SINGLE_EVENT_SUCCESS[5m])) / sum(increase(CLEVERTAP_FLOW_PUBLISH_SINGLE_EVENT_TOTAL[5m])) * 100, 0.1)"
+    "query": "round(sum(increase(CLEVERTAP_FLOW_PUBLISH_SINGLE_EVENT_SUCCESS[5m])) / sum(increase(CLEVERTAP_FLOW_PUBLISH_SINGLE_EVENT_TOTAL[5m])) * 100, 0.1)",
+    "warn_below": 96,
+    "crit_below": 90
   },
   {
     "display_name": "SES Webhook Failed Rate",
@@ -585,7 +595,9 @@
     "query_name": "email_send_success_rate_30",
     "section": "Email Forwarder",
     "metric_type": "success_rate",
-    "query": "(sum(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"success\"}) * 100) / sum(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"total\"})"
+    "query": "(sum(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"success\"}) * 100) / sum(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"total\"})",
+    "warn_below": 94,
+    "crit_below": 90
   },
   {
     "display_name": "Forwarder Combined Success Rate",
@@ -634,7 +646,9 @@
     "query_name": "total_notification_events_not_processed_16",
     "section": "Email Forwarder",
     "metric_type": "failure_count",
-    "query": "sum(EMAIL_FORWARDER_EVENT_CONSUMED{tag_name1=\"failure\"})"
+    "query": "sum(EMAIL_FORWARDER_EVENT_CONSUMED{tag_name1=\"failure\"})",
+    "warn_above": 500,
+    "crit_above": 500
   },
   {
     "display_name": "Total Events Consumed",
@@ -648,7 +662,9 @@
     "query_name": "total_events_not_processed_20",
     "section": "Email Forwarder",
     "metric_type": "failure_count",
-    "query": "sum(EMAIL_FORWARDER_EVENT_CONSUMED{tag_name1=\"failure\"})"
+    "query": "sum(EMAIL_FORWARDER_EVENT_CONSUMED{tag_name1=\"failure\"})",
+    "warn_above": 500,
+    "crit_above": 500
   },
   {
     "display_name": "Firestore Ready Messages",
@@ -740,5 +756,35 @@
     "section": "Webhook Gateway",
     "metric_type": "failure_count",
     "query": "sum(increase(django_http_responses_total_by_status{name=~\"px-bwg-app-server-.*\", status=~\"5.*\"}[5m]))"
+  },
+  {
+    "display_name": "Batch Event Failed Event Count",
+    "query_name": "batch_event_failed_event_count_18",
+    "query": "sum by (name) (FACEBOOK_BATCH_EVENT_FAILED)"
+  },
+  {
+    "display_name": "Facebook DB Interface Error Count",
+    "query_name": "facebook_db_interface_error_count_24",
+    "query": "sum by (name) (FACEBOOK_DB_INTERFACE_ERROR)"
+  },
+  {
+    "display_name": "Facebook Multi Mapped Event Web",
+    "query_name": "facebook_multi_mapped_event_web_22",
+    "query": "sum by (tag_name0) (FACEBOOK_MULTI_EVENT_MAP_WEB{tag_name1=\"total\"})"
+  },
+  {
+    "display_name": "Facebook Multi Mapped Event App",
+    "query_name": "facebook_multi_mapped_event_app_20",
+    "query": "sum by (tag_name0) (FACEBOOK_MULTI_EVENT_MAP_APP{tag_name1=\"total\"})"
+  },
+  {
+    "display_name": "Facebook Web Event Total",
+    "query_name": "facebook_web_event_total_16",
+    "query": "sum by (tag_name0) (FACEBOOK_CONVERSIONS_WEB_EVENT{tag_name1=\"total\"})"
+  },
+  {
+    "display_name": "Facebook App Event Total",
+    "query_name": "facebook_app_event_total_14",
+    "query": "sum by (tag_name0) (FACEBOOK_CONVERSIONS_APP_EVENT{tag_name1=\"total\"})"
   }
 ]

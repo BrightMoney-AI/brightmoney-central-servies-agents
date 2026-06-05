@@ -214,14 +214,14 @@ def _summary_blocks(collected: list[tuple[str, object]], group_name: str = "L0 D
 
 def _business_summary_blocks(metrics: list, date_str: str) -> list[dict]:
     """Slack Block Kit notification for the business metrics canvas."""
-    from .central_business_renderer import _is_flagged, _RATE_CRIT
+    from .central_business_renderer import _is_critical, _is_flagged
 
     flagged = [m for m in metrics if _is_flagged(m)]
     n_sections = len({m.section for m in metrics})
 
     if not flagged:
         overall_emoji, overall_label = "🟢", "ALL HEALTHY"
-    elif any(m.metric_type == "success_rate" and m.value < _RATE_CRIT for m in flagged):
+    elif any(_is_critical(m) for m in flagged):
         overall_emoji, overall_label = "🔴", "CRITICAL"
     else:
         overall_emoji, overall_label = "🟡", "DEGRADED"
@@ -255,11 +255,10 @@ def _business_summary_blocks(metrics: list, date_str: str) -> list[dict]:
     if flagged:
         lines = []
         for m in flagged[:10]:
+            e = "🔴" if _is_critical(m) else "🟡"
             if m.metric_type == "success_rate":
-                e = "🔴" if m.value < _RATE_CRIT else "🟡"
                 lines.append(f"{e} *{m.section}* · {m.display_name}: {m.value:.1f}%")
             else:
-                e = "🔴" if m.value >= 100 else "🟡"
                 lines.append(f"{e} *{m.section}* · {m.display_name}: {m.value:.0f}")
         if len(flagged) > 10:
             lines.append(f"_+{len(flagged) - 10} more_")
