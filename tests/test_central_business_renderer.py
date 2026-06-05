@@ -77,6 +77,31 @@ def test_clevertap_single_event_success_rate_96_6_healthy():
         assert _rate_emoji(m) == "🟢"
 
 
+def test_email_forwarder_combined_success_rate_98_4_healthy():
+    m = _metric(
+        display_name="Forwarder Combined Success Rate",
+        section="Email Forwarder",
+        value=98.4,
+        warn_below=98,
+        crit_below=94,
+    )
+    assert not _is_flagged(m)
+    assert _rate_emoji(m) == "🟢"
+
+
+def test_celery_failed_tasks_1_healthy():
+    m = _metric(
+        display_name="Celery Failed Tasks",
+        section="Email Forwarder",
+        metric_type="failure_count",
+        value=1,
+        warn_above=10,
+        crit_above=50,
+    )
+    assert not _is_flagged(m)
+    assert not _is_critical(m)
+
+
 def test_email_send_success_rate_94_7_healthy():
     m = _metric(
         display_name="Email Send Success Rate",

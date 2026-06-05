@@ -42,30 +42,55 @@ async def collect_business_metrics(vm: VMClient) -> list[BusinessMetric]:
 
     entries: list[dict] = json.loads(path.read_text())
 
-    async def run_one(entry: dict) -> Optional[BusinessMetric]:
+    async def run_one(entry: dict) -> list[BusinessMetric]:
+        taglist = entry.get("taglist")
+        section = entry.get("section", "Other")
+        metric_type = entry.get("metric_type", "total_count")
+        thresholds = {
+            "warn_below": entry.get("warn_below"),
+            "crit_below": entry.get("crit_below"),
+            "warn_above": entry.get("warn_above"),
+            "crit_above": entry.get("crit_above"),
+        }
+
+        if taglist:
+            try:
+                pairs = await vm.query_vector(entry["query"], id_label=taglist)
+            except Exception as exc:
+                log.warning("Business metric query failed [%s]: %s", entry["query_name"], exc)
+                return []
+            return [
+                BusinessMetric(
+                    display_name=label,
+                    query_name=f"{entry['query_name']}_{label}",
+                    section=section,
+                    metric_type=metric_type,
+                    value=val,
+                    **thresholds,
+                )
+                for label, val in pairs
+            ]
+
         try:
             val = await vm.query(entry["query"])
         except Exception as exc:
             log.warning("Business metric query failed [%s]: %s", entry["query_name"], exc)
-            return None
+            return []
         if val is None:
-            return None
-        return BusinessMetric(
+            return []
+        return [BusinessMetric(
             display_name=entry["display_name"],
             query_name=entry["query_name"],
-            section=entry.get("section", "Other"),
-            metric_type=entry.get("metric_type", "total_count"),
+            section=section,
+            metric_type=metric_type,
             value=val,
-            warn_below=entry.get("warn_below"),
-            crit_below=entry.get("crit_below"),
-            warn_above=entry.get("warn_above"),
-            crit_above=entry.get("crit_above"),
-        )
+            **thresholds,
+        )]
 
-    results: list[Optional[BusinessMetric]] = await asyncio.gather(
+    results: list[list[BusinessMetric]] = await asyncio.gather(
         *[run_one(e) for e in entries]
     )
-    metrics = [r for r in results if r is not None]
+    metrics = [m for sublist in results for m in sublist]
     log.info(
         "Business metrics: %d/%d queries returned data.",
         len(metrics), len(entries),

@@ -604,7 +604,9 @@
     "query_name": "email_forwarder_combined_success_rate_34",
     "section": "Email Forwarder",
     "metric_type": "success_rate",
-    "query": "(sum(rate(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"success\"}[5m])) * 100) / sum(rate(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"total\"}[5m]))"
+    "query": "(sum(rate(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"success\"}[5m])) * 100) / sum(rate(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"total\"}[5m]))",
+    "warn_below": 90,
+    "crit_below": 70
   },
   {
     "display_name": "Total Email Send Events",
@@ -632,7 +634,9 @@
     "query_name": "total_failed_tasks_24",
     "section": "Email Forwarder",
     "metric_type": "failure_count",
-    "query": "sum(EMAIL_FORWARDER_CELERY_EVENT_CREATED{tag_name1=\"failure\"})"
+    "query": "sum(EMAIL_FORWARDER_CELERY_EVENT_CREATED{tag_name1=\"failure\"})",
+    "warn_above": 50,
+    "crit_above": 100
   },
   {
     "display_name": "Notification Events Consumed",
@@ -760,31 +764,49 @@
   {
     "display_name": "Batch Event Failed Event Count",
     "query_name": "batch_event_failed_event_count_18",
-    "query": "sum by (name) (FACEBOOK_BATCH_EVENT_FAILED)"
+    "section": "Facebook",
+    "metric_type": "failure_count",
+    "query": "sum by (name) (FACEBOOK_BATCH_EVENT_FAILED)",
+    "taglist": "name"
   },
   {
     "display_name": "Facebook DB Interface Error Count",
     "query_name": "facebook_db_interface_error_count_24",
-    "query": "sum by (name) (FACEBOOK_DB_INTERFACE_ERROR)"
+    "section": "Facebook",
+    "metric_type": "failure_count",
+    "query": "sum by (name) (FACEBOOK_DB_INTERFACE_ERROR)",
+    "taglist": "name"
   },
   {
     "display_name": "Facebook Multi Mapped Event Web",
     "query_name": "facebook_multi_mapped_event_web_22",
-    "query": "sum by (tag_name0) (FACEBOOK_MULTI_EVENT_MAP_WEB{tag_name1=\"total\"})"
+    "section": "Facebook",
+    "metric_type": "total_count",
+    "query": "sum by (tag_name0) (FACEBOOK_MULTI_EVENT_MAP_WEB{tag_name1=\"total\"})",
+    "taglist": "tag_name0"
   },
   {
     "display_name": "Facebook Multi Mapped Event App",
     "query_name": "facebook_multi_mapped_event_app_20",
-    "query": "sum by (tag_name0) (FACEBOOK_MULTI_EVENT_MAP_APP{tag_name1=\"total\"})"
+    "section": "Facebook",
+    "metric_type": "total_count",
+    "query": "sum by (tag_name0) (FACEBOOK_MULTI_EVENT_MAP_APP{tag_name1=\"total\"})",
+    "taglist": "tag_name0"
   },
   {
     "display_name": "Facebook Web Event Total",
     "query_name": "facebook_web_event_total_16",
-    "query": "sum by (tag_name0) (FACEBOOK_CONVERSIONS_WEB_EVENT{tag_name1=\"total\"})"
+    "section": "Facebook",
+    "metric_type": "total_count",
+    "query": "sum by (tag_name0) (FACEBOOK_CONVERSIONS_WEB_EVENT{tag_name1=\"total\"})",
+    "taglist": "tag_name0"
   },
   {
     "display_name": "Facebook App Event Total",
     "query_name": "facebook_app_event_total_14",
-    "query": "sum by (tag_name0) (FACEBOOK_CONVERSIONS_APP_EVENT{tag_name1=\"total\"})"
+    "section": "Facebook",
+    "metric_type": "total_count",
+    "query": "sum by (tag_name0) (FACEBOOK_CONVERSIONS_APP_EVENT{tag_name1=\"total\"})",
+    "taglist": "tag_name0"
   }
 ]

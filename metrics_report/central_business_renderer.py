@@ -120,6 +120,12 @@ def _render_section(section: str, items: list[BusinessMetric]) -> str:
         label = f"all {n} checks healthy" if n > 0 else "no checks"
         lines.append(f"### ✅ {section} · {label}")
         lines.append("")
+        if info_metrics:
+            lines.append("| Metric | Value |")
+            lines.append("|---|---|")
+            for m in info_metrics:
+                lines.append(f"| {m.display_name} | {_fmt_value(m)} |")
+            lines.append("")
         return "\n".join(lines)
 
     sec_emoji = _section_worst_emoji(items)
