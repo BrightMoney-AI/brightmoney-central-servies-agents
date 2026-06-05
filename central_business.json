@@ -300,7 +300,9 @@
     "query_name": "mixpanel_consumer_events_db_store_failed_87",
     "section": "Mixpanel",
     "metric_type": "failure_count",
-    "query": "sum(increase(MIXPANEL_CONSUMER_EVENTS_DB_STORE_FAILED[5m]))"
+    "query": "sum(increase(MIXPANEL_CONSUMER_EVENTS_DB_STORE_FAILED[5m]))",
+    "crit_above": 1000, 
+    "warn_above": 500
   },
   {
     "display_name": "Consumer Events Published",
@@ -321,7 +323,9 @@
     "query_name": "mixpanel_consumer_events_serialization_failed_86",
     "section": "Mixpanel",
     "metric_type": "failure_count",
-    "query": "sum(increase(MIXPANEL_CONSUMER_EVENTS_SERIALIZATION_FAILED[5m]))"
+    "query": "sum(increase(MIXPANEL_CONSUMER_EVENTS_SERIALIZATION_FAILED[5m]))",
+    "crit_above": 1000,
+    "warn_above": 500
   },
   {
     "display_name": "Batch Event Failed Count",
