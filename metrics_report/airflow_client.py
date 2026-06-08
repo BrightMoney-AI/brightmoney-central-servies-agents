@@ -2,7 +2,7 @@
 airflow_client.py — Queries the Airflow PostgreSQL metadata DB for DAG run statuses.
 
 Fetches the latest run state for each dp_* DAG so Data Platform canvas can
-surface failed/running DAGs and confirm successful ones with a single summary line.
+surface failed/running DAGs and confirm successful ones with a single summary line
 """
 from __future__ import annotations
 
