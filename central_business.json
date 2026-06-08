@@ -557,7 +557,7 @@
     "query_name": "email_sent_failed_count_20",
     "section": "Email",
     "metric_type": "failure_count",
-    "query": "sum(EMAIL_SENT_FAILED)"
+    "query": "sum(increase(EMAIL_SENT_FAILED[24h]))"
   },
   {
     "display_name": "SES Webhook Success Rate",
