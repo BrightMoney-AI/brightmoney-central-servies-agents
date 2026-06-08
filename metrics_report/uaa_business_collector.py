@@ -546,7 +546,7 @@ async def _fetch_partner_costs() -> list[BusinessMetric]:
 
     log.info("Partner costs: %d partner(s).", len(rows))
     return [BusinessMetric(
-        display_name="Partner Cost Breakdown (Today)",
+        display_name="Partner Cost Breakdown (Yesterday)",
         query_name="partner_costs",
         section="Partner Costs",
         metric_type="multi_col_table",
