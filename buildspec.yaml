@@ -1,0 +1,18 @@
+version: 0.2
+
+env:
+  parameter-store:
+    PYPI_DEV_USERNAME: "/brightmoney/central/pypi_dev_username"
+    PYPI_DEV_PASSWORD: "/brightmoney/central/pypi_dev_password"
+    PYPI_PROD_USERNAME: "/brightmoney/central/pypi_prod_username"
+    PYPI_PROD_PASSWORD: "/brightmoney/central/pypi_prod_password"
+    CONSUL_TOKEN: "/brightmoney/central-services-agents/consul_token"
+    AWS_ACCOUNT: "/brightmoney/central/aws_account"
+
+phases:
+  pre_build:
+    commands:
+      - docker buildx build -t brightmoney-central-servies-agents --platform=linux/arm64 --build-arg PYPI_PROD=https://$PYPI_PROD_USERNAME:$PYPI_PROD_PASSWORD@pypi.brightmoney.co/simple --build-arg PYPI_DEV=https://$PYPI_DEV_USERNAME:$PYPI_DEV_PASSWORD@pypi.brightmoney.co/snapshots/simple --build-arg CONSUL_TOKEN=$CONSUL_TOKEN -f scripts/docker/Dockerfile .
+      - aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin $AWS_ACCOUNT.dkr.ecr.us-west-2.amazonaws.com
+      - docker tag brightmoney-central-servies-agents:latest $AWS_ACCOUNT.dkr.ecr.us-west-2.amazonaws.com/brightmoney-central-servies-agents:latest
+      - docker push $AWS_ACCOUNT.dkr.ecr.us-west-2.amazonaws.com/brightmoney-central-servies-agents:latest
