@@ -6,7 +6,7 @@ env:
     PYPI_DEV_PASSWORD: "/brightmoney/central/pypi_dev_password"
     PYPI_PROD_USERNAME: "/brightmoney/central/pypi_prod_username"
     PYPI_PROD_PASSWORD: "/brightmoney/central/pypi_prod_password"
-    CONSUL_TOKEN: "/brightmoney/central-services-agents/consul_token"
+    CONSUL_TOKEN: "/brightmoney/brightmoney-akoya/consul_token"
     AWS_ACCOUNT: "/brightmoney/central/aws_account"
 
 phases:
