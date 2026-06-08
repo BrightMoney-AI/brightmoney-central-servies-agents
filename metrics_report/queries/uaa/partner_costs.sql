@@ -5,6 +5,6 @@ SELECT
     ROUND(SUM(cost), 2)                                                      AS daily_cost
 FROM iceberg_db.cost_cube
 WHERE partner IN ('TU_CR', 'PLAID', 'EFX_IIG', 'TU_CCS', 'EFX_EPAY', 'EVOLVE', 'TELLER', 'EFX_CDS', 'FISERV')
-  AND DATE(run_date) = CURRENT_DATE
+  AND DATE(run_date) = CURRENT_DATE - INTERVAL '1' DAY
 GROUP BY partner
 ORDER BY partner
