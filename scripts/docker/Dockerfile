@@ -31,7 +31,7 @@ ENV PIP_USER=false
 
 RUN pip install --upgrade pip==23.0.1
 
-RUN pip install --extra-index-url=${PYPI_PROD} --extra-index-url=${PYPI_DEV} -r /var/opt/brightmoney-central-servies-agents/requirements.txt
+RUN pip install -r /var/opt/brightmoney-central-servies-agents/requirements.txt
 
 RUN python3 /var/opt/brightmoney-central-servies-agents/scripts/docker/create_env.py
 
