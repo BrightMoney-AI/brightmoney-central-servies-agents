@@ -85,7 +85,7 @@ def _render_provider_comparison(m: BusinessMetric) -> str:
     lines: list[str] = [
         f"**{m.display_name}**",
         "",
-        "| Provider | Today Sessions | Today Success | Yesterday Sessions | Yesterday Success |",
+        "| Provider | Yesterday Sessions | Yesterday Success | Day Before Sessions | Day Before Success |",
         "|---|---|---|---|---|",
     ]
     for detail in m.details:
@@ -119,23 +119,22 @@ def _render_multi_col_table(m: BusinessMetric) -> str:
 
 
 def _render_source_comparison(m: BusinessMetric) -> str:
-    """Render a source_comparison metric as a Today vs Yesterday breakdown table.
+    """Render a source_comparison metric as a Yesterday vs Day Before breakdown table.
 
-    Details rows are pipe-delimited: source | flow | today | yesterday | delta
+    Details rows are pipe-delimited: source | flow | yesterday | day_before | delta
     """
     lines: list[str] = [
-        f"**{m.display_name}**  _(last 4h today vs same 4h window yesterday)_",
+        f"**{m.display_name}**  _(yesterday vs day before — full calendar day)_",
         "",
-        "| Source | Flow | Today | Yesterday | Change |",
+        "| Source | Flow | Yesterday | Day Before | Change |",
         "|---|---|---|---|---|",
     ]
     for detail in m.details:
         parts = [p.strip() for p in detail.split("|")]
         if len(parts) == 5:
-            source, flow, today, yesterday, delta = parts
-            # Colour the delta: green if positive/zero, red if negative
+            source, flow, yesterday, day_before, delta = parts
             delta_fmt = f"🟢 {delta}" if not delta.startswith("-") else f"🔴 {delta}"
-            lines.append(f"| {source} | {flow} | {today} | {yesterday} | {delta_fmt} |")
+            lines.append(f"| {source} | {flow} | {yesterday} | {day_before} | {delta_fmt} |")
     lines.append("")
     return "\n".join(lines)
 

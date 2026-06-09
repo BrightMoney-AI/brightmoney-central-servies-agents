@@ -1,12 +1,16 @@
-WITH summary AS (
+WITH latest_run AS (
+    SELECT MAX(run_date) AS run_date
+    FROM uaa_db.plaid_force_refresh_metadata
+),
+summary AS (
     SELECT state, COUNT(DISTINCT item_pid) AS item_counts
     FROM uaa_db.plaid_force_refresh_metadata
-    WHERE run_date = CURRENT_DATE
+    WHERE run_date = (SELECT run_date FROM latest_run)
     GROUP BY state
     UNION ALL
     SELECT 'Total' AS state, COUNT(DISTINCT item_pid) AS item_counts
     FROM uaa_db.plaid_force_refresh_metadata
-    WHERE run_date = CURRENT_DATE
+    WHERE run_date = (SELECT run_date FROM latest_run)
 ),
 totals AS (
     SELECT
@@ -20,12 +24,12 @@ totals AS (
 success_items AS (
     SELECT DISTINCT item_pid
     FROM uaa_db.plaid_force_refresh_data
-    WHERE CAST(from_iso8601_timestamp(bright_updated_at) AS DATE) = CURRENT_DATE
+    WHERE CAST(from_iso8601_timestamp(bright_updated_at) AS DATE) = CURRENT_DATE - INTERVAL '1' DAY
 ),
 error_items AS (
     SELECT DISTINCT item_pid
     FROM uaa_db.plaid_force_refresh_error_data
-    WHERE CAST(from_iso8601_timestamp(bright_updated_at) AS DATE) = CURRENT_DATE
+    WHERE CAST(from_iso8601_timestamp(bright_updated_at) AS DATE) = CURRENT_DATE - INTERVAL '1' DAY
 ),
 unique_errors AS (
     SELECT item_pid FROM error_items

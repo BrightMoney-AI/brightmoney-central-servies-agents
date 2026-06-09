@@ -8,7 +8,8 @@ WITH base AS (
     LEFT JOIN iceberg_db.uaa_transaction_dump_daily_metrics tm
         ON  ca.account_id = tm.account_id
         AND tm.run_date   = (SELECT MAX(run_date) FROM iceberg_db.uaa_transaction_dump_daily_metrics)
-    WHERE ca.created_at > DATE_ADD('day', -2, CURRENT_DATE)
+    WHERE ca.created_at >= CURRENT_DATE - INTERVAL '2' DAY
+      AND ca.created_at <  CURRENT_DATE
 ),
 per_provider AS (
     -- rows for specific providers

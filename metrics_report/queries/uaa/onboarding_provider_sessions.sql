@@ -15,7 +15,7 @@ WITH session_events AS (
     WHERE json_extract_scalar(s.session_data, '$.flow_data.flow_type')    = 'ONBOARDING'
       AND json_extract_scalar(s.session_data, '$.flow_data.linking_for')  = 'CHECKING'
       AND json_extract_scalar(s.session_data, '$.flow_data.linking_flow') = 'ADD'
-      AND s.created_at >= CURRENT_DATE - INTERVAL '2' DAY
+      AND s.created_at >= CURRENT_DATE - INTERVAL '3' DAY
 ),
 sessions_base AS (
     SELECT
@@ -32,7 +32,7 @@ d_day AS (
         COUNT(*)        AS sessions,
         SUM(is_success) AS success_sessions
     FROM sessions_base
-    WHERE DATE(session_created_at) = CURRENT_DATE
+    WHERE DATE(session_created_at) = CURRENT_DATE - INTERVAL '1' DAY
       AND provider IN ('AKOYA', 'PLAID', 'DL_CAPITALONE')
     GROUP BY provider
 ),
@@ -42,7 +42,7 @@ d_minus_1 AS (
         COUNT(*)        AS sessions,
         SUM(is_success) AS success_sessions
     FROM sessions_base
-    WHERE DATE(session_created_at) = CURRENT_DATE - INTERVAL '1' DAY
+    WHERE DATE(session_created_at) = CURRENT_DATE - INTERVAL '2' DAY
       AND provider IN ('AKOYA', 'PLAID', 'DL_CAPITALONE')
     GROUP BY provider
 )

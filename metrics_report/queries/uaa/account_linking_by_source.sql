@@ -13,28 +13,27 @@ WITH successful_sessions AS (
         ON e.account_linking_session_id = s.id
     WHERE e.event_name = 'ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT'
       AND JSON_EXTRACT_SCALAR(s.session_data, '$.flow_data.client_source') IN ('web', 'android', 'ios')
-      AND s.created_at >= NOW() - INTERVAL '28' HOUR
-),
-today_agg AS (
-    SELECT client_source, flow_type, COUNT(*) AS sessions
-    FROM successful_sessions
-    WHERE created_at >= NOW() - INTERVAL '4' HOUR
-    GROUP BY client_source, flow_type
+      AND s.created_at >= CURRENT_DATE - INTERVAL '2' DAY
 ),
 yesterday_agg AS (
     SELECT client_source, flow_type, COUNT(*) AS sessions
     FROM successful_sessions
-    WHERE created_at >= NOW() - INTERVAL '28' HOUR
-      AND created_at <  NOW() - INTERVAL '24' HOUR
+    WHERE DATE(created_at) = CURRENT_DATE - INTERVAL '1' DAY
+    GROUP BY client_source, flow_type
+),
+day_before_agg AS (
+    SELECT client_source, flow_type, COUNT(*) AS sessions
+    FROM successful_sessions
+    WHERE DATE(created_at) = CURRENT_DATE - INTERVAL '2' DAY
     GROUP BY client_source, flow_type
 )
 SELECT
-    COALESCE(t.client_source, y.client_source) AS client_source,
-    COALESCE(t.flow_type,     y.flow_type)     AS flow_type,
-    COALESCE(t.sessions,      0)               AS today_sessions,
-    COALESCE(y.sessions,      0)               AS yesterday_sessions
-FROM today_agg t
-FULL OUTER JOIN yesterday_agg y
-    ON  y.client_source = t.client_source
-    AND y.flow_type     = t.flow_type
+    COALESCE(y.client_source, d.client_source) AS client_source,
+    COALESCE(y.flow_type,     d.flow_type)     AS flow_type,
+    COALESCE(y.sessions,      0)               AS yesterday_sessions,
+    COALESCE(d.sessions,      0)               AS day_before_sessions
+FROM yesterday_agg y
+FULL OUTER JOIN day_before_agg d
+    ON  d.client_source = y.client_source
+    AND d.flow_type     = y.flow_type
 ORDER BY client_source, flow_type

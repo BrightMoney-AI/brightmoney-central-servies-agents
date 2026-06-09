@@ -122,26 +122,26 @@ async def _fetch_account_linking_by_source() -> list[BusinessMetric]:
         return []
 
     details: list[str] = []
-    total_today = 0
+    total_yesterday = 0
 
     for row in rows:
-        source    = str(row.get("client_source") or "unknown")
-        flow      = str(row.get("flow_type")     or "Other")
-        today     = int(row.get("today_sessions")     or 0)
-        yesterday = int(row.get("yesterday_sessions") or 0)
-        delta     = today - yesterday
-        delta_str = f"+{delta}" if delta >= 0 else str(delta)
-        details.append(f"{source}|{flow}|{today}|{yesterday}|{delta_str}")
-        total_today += today
+        source     = str(row.get("client_source")      or "unknown")
+        flow       = str(row.get("flow_type")           or "Other")
+        yesterday  = int(row.get("yesterday_sessions")  or 0)
+        day_before = int(row.get("day_before_sessions") or 0)
+        delta      = yesterday - day_before
+        delta_str  = f"+{delta}" if delta >= 0 else str(delta)
+        details.append(f"{source}|{flow}|{yesterday}|{day_before}|{delta_str}")
+        total_yesterday += yesterday
 
     log.info("Account linking by source: %d row(s).", len(details))
 
     return [BusinessMetric(
-        display_name="Successful Account Linkings",
+        display_name="Successful Account Linkings (Yesterday vs Day Before)",
         query_name="account_linking_by_source",
         section="Account Linking",
         metric_type="source_comparison",
-        value=float(total_today),
+        value=float(total_yesterday),
         details=details,
     )]
 
@@ -225,7 +225,41 @@ async def _fetch_plaid_batch_historical_recency() -> list[BusinessMetric]:
         c.replace("metric_calculated_time", "Time").replace("number_of_accounts", "Accounts")
         for c in cols
     )
+    def _row_str(r: dict) -> str:
+        parts = []
+        for c in cols:
+            v = r.get(c)
+            parts.append(_fmt_ts(v) if c == "metric_calculated_time" else (str(v) if v is not None else "N/A"))
+        return "|".join(parts)
+
+    def _to_ist(v):
+        from datetime import datetime, timezone, timedelta
+        IST = timezone(timedelta(hours=5, minutes=30))
+        if isinstance(v, datetime):
+            return v.astimezone(IST)
+        if isinstance(v, str) and len(v) >= 13:
+            try:
+                return datetime.fromisoformat(v[:19]).replace(tzinfo=timezone.utc).astimezone(IST)
+            except ValueError:
+                pass
+        return None
+
+    def _is_yesterday_230pm_ist(v) -> bool:
+        from datetime import datetime, timezone, timedelta
+        IST = timezone(timedelta(hours=5, minutes=30))
+        t = _to_ist(v)
+        if t is None:
+            return False
+        yesterday = (datetime.now(IST) - timedelta(days=1)).date()
+        return t.date() == yesterday and t.hour == 14 and 28 <= t.minute <= 32
+
+    snapshot_230pm = next((r for r in rows if _is_yesterday_230pm_ist(r.get("metric_calculated_time"))), None)
+
     details = [header]
+    if snapshot_230pm:
+        row = dict(snapshot_230pm)
+        row["metric_calculated_time"] = "Yesterday 2:30 PM IST"
+        details.append(_row_str(row))
     for r in rows[:24]:
         parts = []
         for c in cols:
@@ -326,7 +360,7 @@ async def _fetch_plaid_force_refresh_daily() -> list[BusinessMetric]:
         if "Success" in str(metric):
             success_count = int(count or 0)
     return [BusinessMetric(
-        display_name="Daily Metrics (Today)",
+        display_name="Daily Metrics (Yesterday)",
         query_name="plaid_force_refresh_daily",
         section="Plaid Force Refresh",
         metric_type="multi_col_table",
@@ -400,13 +434,13 @@ async def _fetch_plaid_force_refresh_trend() -> list[BusinessMetric]:
 # Value is in seconds (raw metric is milliseconds, divided by 1000).
 # Compares today's value vs the same instant 24 hours ago.
 
-def _alsm_latency_promql(aggregator: str) -> str:
+def _alsm_latency_promql(aggregator: str, quantile: str = "0.99") -> str:
     return (
         f'sum('
         f'alsm_event_time_diff_metrics{{'
         f'environment="prod",'
         f'aggregator="{aggregator}",'
-        f'quantile="0.99",'
+        f'quantile="{quantile}",'
         f'event1="LINKING_SUCCESS_EVENT",'
         f'event2="ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT"'
         f'}}/1000)'
@@ -415,43 +449,49 @@ def _alsm_latency_promql(aggregator: str) -> str:
 
 async def _fetch_alsm_latency() -> list[BusinessMetric]:
     aggregators = ["PLAID", "DL_CAPITALONE"]
+    # Per aggregator: [p50, p99_today, p99_yesterday]
     try:
         async with VMClient(settings.vm_base_url) as vm:
             queries = []
             for agg in aggregators:
-                q = _alsm_latency_promql(agg)
-                queries += [vm.query(q), vm.query(f"{q} offset 24h")]
+                q99 = _alsm_latency_promql(agg, "0.99")
+                queries += [
+                    vm.query(_alsm_latency_promql(agg, "0.5")),
+                    vm.query(q99),
+                    vm.query(f"{q99} offset 24h"),
+                ]
             results = await asyncio.gather(*queries)
     except Exception as exc:
         log.error("ALSM latency query failed: %s", exc)
         return []
 
-    details    = ["Aggregator|Today P99|Yesterday P99|Change"]
-    best_today = 0.0
+    details    = ["Aggregator|P50|P99|Yesterday P99|Change"]
+    best_p99   = 0.0
 
     for i, agg in enumerate(aggregators):
-        today_raw, yesterday_raw = results[i * 2], results[i * 2 + 1]
-        if today_raw is None and yesterday_raw is None:
+        p50_raw, p99_raw, p99_yday_raw = results[i * 3 : i * 3 + 3]
+        if p50_raw is None and p99_raw is None:
             continue
-        today_s     = float(today_raw)     if today_raw     is not None else 0.0
-        yesterday_s = float(yesterday_raw) if yesterday_raw is not None else 0.0
-        delta       = today_s - yesterday_s
-        delta_str   = f"+{delta:.1f}s" if delta >= 0 else f"{delta:.1f}s"
-        delta_fmt   = f"🔴 {delta_str}" if delta > 0 else f"🟢 {delta_str}"
-        details.append(f"{agg}|{today_s:.1f}s|{yesterday_s:.1f}s|{delta_fmt}")
-        best_today  = max(best_today, today_s)
-        log.info("ALSM latency [%s]: today=%.1fs yesterday=%.1fs", agg, today_s, yesterday_s)
+        p50_s    = float(p50_raw)      if p50_raw      is not None else 0.0
+        p99_s    = float(p99_raw)      if p99_raw      is not None else 0.0
+        p99_yday = float(p99_yday_raw) if p99_yday_raw is not None else 0.0
+        delta     = p99_s - p99_yday
+        delta_str = f"+{delta:.1f}s" if delta >= 0 else f"{delta:.1f}s"
+        delta_fmt = f"🔴 {delta_str}" if delta > 0 else f"🟢 {delta_str}"
+        details.append(f"{agg}|{p50_s:.1f}s|{p99_s:.1f}s|{p99_yday:.1f}s|{delta_fmt}")
+        best_p99  = max(best_p99, p99_s)
+        log.info("ALSM latency [%s]: p50=%.1fs p99=%.1fs yesterday_p99=%.1fs", agg, p50_s, p99_s, p99_yday)
 
     if len(details) == 1:
         log.info("ALSM latency: no data returned for any aggregator.")
         return []
 
     return [BusinessMetric(
-        display_name="ALSM Latency — P99 (LINKING_SUCCESS → ACCOUNTS_CREATED)",
+        display_name="ALSM Latency — P50/P99 (LINKING_SUCCESS → ACCOUNTS_CREATED)",
         query_name="alsm_latency",
         section="ALSM",
         metric_type="multi_col_table",
-        value=best_today,
+        value=best_p99,
         details=details,
     )]
 
@@ -480,27 +520,27 @@ async def _fetch_saism_latency() -> list[BusinessMetric]:
             queries = []
             for agg in aggregators:
                 q = _saism_latency_promql(agg)
-                queries += [vm.query(q), vm.query(f"{q} offset 24h")]
+                queries += [vm.query(f"{q} offset 24h"), vm.query(f"{q} offset 48h")]
             results = await asyncio.gather(*queries)
     except Exception as exc:
         log.error("SAISM latency query failed: %s", exc)
         return []
 
-    details    = ["Aggregator|Today P99|Yesterday P99|Change"]
-    best_today = 0.0
+    details        = ["Aggregator|Yesterday P99|Day Before P99|Change"]
+    best_yesterday = 0.0
 
     for i, agg in enumerate(aggregators):
-        today_raw, yesterday_raw = results[i * 2], results[i * 2 + 1]
-        if today_raw is None and yesterday_raw is None:
+        yesterday_raw, day_before_raw = results[i * 2], results[i * 2 + 1]
+        if yesterday_raw is None and day_before_raw is None:
             continue
-        today_s     = float(today_raw)     if today_raw     is not None else 0.0
-        yesterday_s = float(yesterday_raw) if yesterday_raw is not None else 0.0
-        delta       = today_s - yesterday_s
-        delta_str   = f"+{delta:.1f}s" if delta >= 0 else f"{delta:.1f}s"
-        delta_fmt   = f"🔴 {delta_str}" if delta > 0 else f"🟢 {delta_str}"
-        details.append(f"{agg}|{today_s:.1f}s|{yesterday_s:.1f}s|{delta_fmt}")
-        best_today  = max(best_today, today_s)
-        log.info("SAISM latency [%s]: today=%.1fs yesterday=%.1fs", agg, today_s, yesterday_s)
+        yesterday_s  = float(yesterday_raw)  if yesterday_raw  is not None else 0.0
+        day_before_s = float(day_before_raw) if day_before_raw is not None else 0.0
+        delta        = yesterday_s - day_before_s
+        delta_str    = f"+{delta:.1f}s" if delta >= 0 else f"{delta:.1f}s"
+        delta_fmt    = f"🔴 {delta_str}" if delta > 0 else f"🟢 {delta_str}"
+        details.append(f"{agg}|{yesterday_s:.1f}s|{day_before_s:.1f}s|{delta_fmt}")
+        best_yesterday = max(best_yesterday, yesterday_s)
+        log.info("SAISM latency [%s]: yesterday=%.1fs day_before=%.1fs", agg, yesterday_s, day_before_s)
 
     if len(details) == 1:
         log.info("SAISM latency: no data returned for any aggregator.")
@@ -511,7 +551,7 @@ async def _fetch_saism_latency() -> list[BusinessMetric]:
         query_name="saism_latency",
         section="SAISM",
         metric_type="multi_col_table",
-        value=best_today,
+        value=best_yesterday,
         details=details,
     )]
 
