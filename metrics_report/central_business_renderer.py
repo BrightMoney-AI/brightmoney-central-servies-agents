@@ -2,7 +2,7 @@
 Renders Central Services business metrics into Slack Canvas markdown.
 
 Layout per section:
-  - All checks healthy  → single ✅ summary line
+  - All checks healthy  → single summary line
   - Has flagged items   → table of flagged metrics, then collapsed healthy line
   - Info metrics (totals/rates) shown only when section has issues
 
