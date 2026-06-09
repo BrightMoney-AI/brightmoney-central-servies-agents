@@ -500,13 +500,13 @@ async def _fetch_alsm_latency() -> list[BusinessMetric]:
 # End-to-end latency from ACCOUNTS_INGESTION_START_EVENT to
 # ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT for CRBAA and BRIGHT at P99.
 
-def _saism_latency_promql(aggregator: str) -> str:
+def _saism_latency_promql(aggregator: str, quantile: str = "0.99") -> str:
     return (
         f'sum('
         f'saism_event_time_diff_metrics{{'
         f'environment="prod",'
         f'aggregator="{aggregator}",'
-        f'quantile="0.99",'
+        f'quantile="{quantile}",'
         f'event1="ACCOUNTS_INGESTION_START_EVENT",'
         f'event2="ACCOUNTS_CREATED_IN_ENTITY_MANAGER_APP_EVENT"'
         f'}}/1000)'
@@ -519,39 +519,44 @@ async def _fetch_saism_latency() -> list[BusinessMetric]:
         async with VMClient(settings.vm_base_url) as vm:
             queries = []
             for agg in aggregators:
-                q = _saism_latency_promql(agg)
-                queries += [vm.query(f"{q} offset 24h"), vm.query(f"{q} offset 48h")]
+                q99 = _saism_latency_promql(agg, "0.99")
+                queries += [
+                    vm.query(_saism_latency_promql(agg, "0.5")),
+                    vm.query(q99),
+                    vm.query(f"{q99} offset 24h"),
+                ]
             results = await asyncio.gather(*queries)
     except Exception as exc:
         log.error("SAISM latency query failed: %s", exc)
         return []
 
-    details        = ["Aggregator|Yesterday P99|Day Before P99|Change"]
-    best_yesterday = 0.0
+    details  = ["Aggregator|P50|P99|Yesterday P99|Change"]
+    best_p99 = 0.0
 
     for i, agg in enumerate(aggregators):
-        yesterday_raw, day_before_raw = results[i * 2], results[i * 2 + 1]
-        if yesterday_raw is None and day_before_raw is None:
+        p50_raw, p99_raw, p99_yday_raw = results[i * 3 : i * 3 + 3]
+        if p50_raw is None and p99_raw is None:
             continue
-        yesterday_s  = float(yesterday_raw)  if yesterday_raw  is not None else 0.0
-        day_before_s = float(day_before_raw) if day_before_raw is not None else 0.0
-        delta        = yesterday_s - day_before_s
-        delta_str    = f"+{delta:.1f}s" if delta >= 0 else f"{delta:.1f}s"
-        delta_fmt    = f"🔴 {delta_str}" if delta > 0 else f"🟢 {delta_str}"
-        details.append(f"{agg}|{yesterday_s:.1f}s|{day_before_s:.1f}s|{delta_fmt}")
-        best_yesterday = max(best_yesterday, yesterday_s)
-        log.info("SAISM latency [%s]: yesterday=%.1fs day_before=%.1fs", agg, yesterday_s, day_before_s)
+        p50_s    = float(p50_raw)      if p50_raw      is not None else 0.0
+        p99_s    = float(p99_raw)      if p99_raw      is not None else 0.0
+        p99_yday = float(p99_yday_raw) if p99_yday_raw is not None else 0.0
+        delta     = p99_s - p99_yday
+        delta_str = f"+{delta:.1f}s" if delta >= 0 else f"{delta:.1f}s"
+        delta_fmt = f"🔴 {delta_str}" if delta > 0 else f"🟢 {delta_str}"
+        details.append(f"{agg}|{p50_s:.1f}s|{p99_s:.1f}s|{p99_yday:.1f}s|{delta_fmt}")
+        best_p99 = max(best_p99, p99_s)
+        log.info("SAISM latency [%s]: p50=%.1fs p99=%.1fs yesterday_p99=%.1fs", agg, p50_s, p99_s, p99_yday)
 
     if len(details) == 1:
         log.info("SAISM latency: no data returned for any aggregator.")
         return []
 
     return [BusinessMetric(
-        display_name="SAISM Latency — P99 (ACCOUNTS_INGESTION_START → ACCOUNTS_CREATED)",
+        display_name="SAISM Latency — P50/P99 (ACCOUNTS_INGESTION_START → ACCOUNTS_CREATED)",
         query_name="saism_latency",
         section="SAISM",
         metric_type="multi_col_table",
-        value=best_yesterday,
+        value=best_p99,
         details=details,
     )]
 
