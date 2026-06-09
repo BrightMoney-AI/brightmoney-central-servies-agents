@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Optional
 
@@ -121,6 +121,7 @@ class AirflowDagRun:
     state: str              # success, failed, running, queued, up_for_retry
     start_date: Optional[datetime]
     end_date: Optional[datetime]
+    run_date: Optional[date] = None   # IST calendar date of the run
 
     @property
     def is_healthy(self) -> bool:
@@ -146,6 +147,7 @@ class ViewFlowHealth:
 class AirflowHealth:
     dag_runs: list[AirflowDagRun]
     view_flow: Optional[ViewFlowHealth] = None
+    pipeline_runs: list[AirflowDagRun] = field(default_factory=list)  # today + yesterday per pipeline DAG
 
 
 @dataclass

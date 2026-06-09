@@ -6,10 +6,10 @@ Each service is a collapsible # heading; System Health / API Metrics / Endpoints
 are ## sub-sections that get collapse arrows in the Slack Canvas UI.
 """
 from __future__ import annotations
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from .models import AirflowHealth, KafkaConnectHealth, L0Report, Status
+from .models import AirflowDagRun, AirflowHealth, KafkaConnectHealth, L0Report, Status
 from .renderer import (
     IST,
     _endpoint_is_flagged,
@@ -239,28 +239,57 @@ def _render_connector_section(connector_health: KafkaConnectHealth) -> str:
     return "\n".join(lines)
 
 
+def _state_emoji(state: str) -> str:
+    if state == "success":
+        return "🟢"
+    elif state == "failed":
+        return "🔴"
+    elif state == "running":
+        return "🔵"
+    return "⚪"
+
+
 def _render_airflow_section(airflow_health: AirflowHealth) -> str:
     """Render a ## Airflow DAGs section with DB-based DAG status and 24h view flow summary."""
-    if not airflow_health.dag_runs and not airflow_health.view_flow:
+    if not airflow_health.dag_runs and not airflow_health.view_flow and not airflow_health.pipeline_runs:
         return ""
 
     lines: list[str] = ["## Airflow DAGs", ""]
+
+    # ── Pipeline DAGs: today vs yesterday ─────────────────────────────────────
+    if airflow_health.pipeline_runs:
+        IST_TZ = timezone(timedelta(hours=5, minutes=30))
+        today_ist     = datetime.now(IST_TZ).date()
+        yesterday_ist = today_ist - timedelta(days=1)
+
+        # Index by (dag_id, run_date)
+        run_index: dict[tuple, AirflowDagRun] = {}
+        for r in airflow_health.pipeline_runs:
+            if r.run_date:
+                run_index[(r.dag_id, r.run_date)] = r
+
+        dag_ids = sorted({r.dag_id for r in airflow_health.pipeline_runs})
+
+        lines.append("| DAG | Today | Yesterday |")
+        lines.append("|---|---|---|")
+        def _cell(dag_id: str, d):
+            r = run_index.get((dag_id, d))
+            if not r:
+                return "—"
+            started = r.start_date.strftime("%H:%M IST") if r.start_date else ""
+            return f"{_state_emoji(r.state)} {r.state}" + (f" ({started})" if started else "")
+
+        for dag_id in dag_ids:
+            lines.append(f"| `{dag_id}` | {_cell(dag_id, today_ist)} | {_cell(dag_id, yesterday_ist)} |")
+        lines.append("")
 
     # ── DAG status from DB (dp_cosmos_flag_debezium_invalid_tables) ───────────
     if airflow_health.dag_runs:
         lines.append("| DAG | State | Last run |")
         lines.append("|---|---|---|")
         for d in sorted(airflow_health.dag_runs, key=lambda x: x.dag_id):
-            if d.state == "success":
-                state_emoji = "🟢"
-            elif d.state == "failed":
-                state_emoji = "🔴"
-            elif d.state == "running":
-                state_emoji = "🔵"
-            else:
-                state_emoji = "⚪"
             started = d.start_date.strftime("%d %b %H:%M IST") if d.start_date else "—"
-            lines.append(f"| `{d.dag_id}` | {state_emoji} {d.state} | {started} |")
+            lines.append(f"| `{d.dag_id}` | {_state_emoji(d.state)} {d.state} | {started} |")
         lines.append("")
 
     # ── View flow 24h summary (dp_cosmos_execute_view_flow) ───────────────────

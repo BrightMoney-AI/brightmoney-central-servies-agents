@@ -31,6 +31,26 @@ WHERE dag_id = 'dp_cosmos_flag_debezium_invalid_tables'
 ORDER BY dag_id, start_date DESC
 """)
 
+# Latest run per (dag_id, IST calendar date) for today + yesterday.
+_PIPELINE_QUERY = text("""
+SELECT DISTINCT ON (dag_id, ((start_date AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata')::date)
+    dag_id,
+    ((start_date AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata')::date AS run_date,
+    state,
+    start_date,
+    end_date
+FROM dag_run
+WHERE dag_id IN (
+    'transaction_parallel_ingestion_new_emr',
+    'cost_cube_pipeline_new_emr'
+)
+  AND start_date >= NOW() - INTERVAL '2 days'
+ORDER BY
+    dag_id,
+    ((start_date AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata')::date DESC,
+    start_date DESC
+""")
+
 
 def _fetch_sync(db_url: str) -> AirflowHealth:
     engine = sqlalchemy.create_engine(
@@ -42,7 +62,8 @@ def _fetch_sync(db_url: str) -> AirflowHealth:
     )
     try:
         with engine.connect() as conn:
-            rows = conn.execute(_QUERY).fetchall()
+            rows          = conn.execute(_QUERY).fetchall()
+            pipeline_rows = conn.execute(_PIPELINE_QUERY).fetchall()
     finally:
         engine.dispose()
 
@@ -55,8 +76,19 @@ def _fetch_sync(db_url: str) -> AirflowHealth:
         )
         for row in rows
     ]
-    log.info("Airflow: fetched %d dp_* DAG run(s).", len(dag_runs))
-    return AirflowHealth(dag_runs=dag_runs)
+    pipeline_runs = [
+        AirflowDagRun(
+            dag_id=row.dag_id,
+            state=row.state or "unknown",
+            start_date=row.start_date,
+            end_date=row.end_date,
+            run_date=row.run_date,
+        )
+        for row in pipeline_rows
+    ]
+    log.info("Airflow: fetched %d dp_* DAG run(s), %d pipeline run(s).",
+             len(dag_runs), len(pipeline_runs))
+    return AirflowHealth(dag_runs=dag_runs, pipeline_runs=pipeline_runs)
 
 
 _VIEW_FLOW_DAG = "dp_cosmos_execute_view_flow"
