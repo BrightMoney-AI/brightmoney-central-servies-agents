@@ -99,16 +99,16 @@ def build_system_queries(selector: str = "", window: str = "24h") -> list[Query]
             unit="%",
             per_server=True,
         ),
-        # Instant aggregate — total count of up/down servers
+        # 24h aggregate — servers always up vs had any outage over the window
         Query(
             name="servers_up",
-            promql=f"count(up{w} == 1)",
+            promql=f"count(min_over_time(up{w}[{window}:5m]) == 1)",
             unit="count",
             per_server=False,
         ),
         Query(
             name="servers_down",
-            promql=f"count(up{w} == 0) or vector(0)",
+            promql=f"count(min_over_time(up{w}[{window}:5m]) < 1) or vector(0)",
             unit="count",
             per_server=False,
         ),
