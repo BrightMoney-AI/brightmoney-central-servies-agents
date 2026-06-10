@@ -51,9 +51,14 @@ async def run_report(group: str | None = None) -> None:
     biz_metrics:     list = []
     uaa_biz_metrics: list = []
     dp_biz_metrics:  list = []
+    dp_l0_report           = None
 
     async with VMClient(settings.vm_base_url) as vm:
         for service in services:
+            # Skip reference-only entries (no VM/API selectors) — they have no metrics to collect
+            if not service.system_selector and not service.api_selector:
+                log.info("Skipping %s — reference-only entry (no VM/API selector).", service.display_name)
+                continue
             log.info("Collecting: %s [group=%s]", service.display_name, service.report_group)
             raw = await collect(vm, gateway, service)
             l0  = to_l0_report(raw, service_name=service.display_name, show_api_metrics=bool(service.api_job))
@@ -68,6 +73,12 @@ async def run_report(group: str | None = None) -> None:
                 )
             else:
                 log.info("[%s] All queries succeeded.", service.display_name)
+
+        if collect_dp_biz:
+            from .dp_l0_collector import collect_dp_l0
+            dp_l0_svc = next((s for s in services if s.display_name == "Data Platform L0"), None)
+            if dp_l0_svc and dp_l0_svc.kafka_cdc_sinks:
+                dp_l0_report = await collect_dp_l0(vm, dp_l0_svc.kafka_cdc_sinks)
 
         if collect_central_biz:
             from .central_business_collector import collect_business_metrics
@@ -142,6 +153,17 @@ async def run_report(group: str | None = None) -> None:
         dp_biz_blocks = _dp_biz_summary_blocks(dp_biz_metrics, date_str)
         await publish_canvas(dp_biz_md, dp_biz_blocks, title=dp_biz_title)
         log.info("Data Platform business metrics canvas posted (%d metrics).", len(dp_biz_metrics))
+
+    if dp_l0_report is not None:
+        from .dp_l0_renderer import render_dp_l0_canvas
+        dp_l0_title  = f"Data Platform — connector health — {date_str}"
+        dp_l0_md     = render_dp_l0_canvas(dp_l0_report, title=dp_l0_title)
+        dp_l0_blocks = _dp_l0_summary_blocks(dp_l0_report, date_str)
+        await publish_canvas(dp_l0_md, dp_l0_blocks, title=dp_l0_title)
+        log.info(
+            "Data Platform connector health canvas posted (%d flagged sinks, %d flagged VMs).",
+            len(dp_l0_report.flagged_sinks), len(dp_l0_report.flagged_vms),
+        )
 
 
 def _summary_blocks(collected: list[tuple[str, object]], group_name: str = "L0 Daily Metrics") -> list[dict]:
@@ -362,6 +384,60 @@ def _dp_biz_summary_blocks(metrics: list, date_str: str) -> list[dict]:
             lines.append(f"{e} *{m.section}* · {m.display_name}: {val}")
         if len(flagged) > 10:
             lines.append(f"_+{len(flagged) - 10} more_")
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}})
+
+    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": "Full breakdown → canvas below ↓"}]})
+    return blocks
+
+
+def _dp_l0_summary_blocks(report: object, date_str: str) -> list[dict]:
+    from .dp_l0_collector import DPL0Report
+    r: DPL0Report = report  # type: ignore[assignment]
+
+    n_sinks  = len(r.sinks)
+    n_flag_s = len(r.flagged_sinks)
+    n_flag_v = len(r.flagged_vms)
+    n_ok_s   = n_sinks - n_flag_s
+
+    if n_flag_s == 0 and n_flag_v == 0:
+        overall_emoji, overall_label = "🟢", "ALL HEALTHY"
+    elif any(
+        s.coord_status == "critical" or s.lag_delta_status == "critical" or s.heartbeat_status == "critical"
+        for s in r.flagged_sinks
+    ) or any(v.status == "critical" for v in r.flagged_vms):
+        overall_emoji, overall_label = "🔴", "CRITICAL"
+    else:
+        overall_emoji, overall_label = "🟡", "DEGRADED"
+
+    ts_ist   = datetime.now(IST)
+    date_str = ts_ist.strftime("%a %d %b %Y · %I:%M %p IST")
+
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "📊  Data Platform — connector health", "emoji": True},
+        },
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": date_str}]},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*Overall:* {overall_emoji} *{overall_label}*   ·   "
+                    f"*{n_sinks}* sinks   ·   "
+                    f"🔴🟡 {n_flag_s} flagged   🟢 {n_ok_s} healthy"
+                    + (f"   ·   💾 {n_flag_v} disk issue(s)" if n_flag_v else "")
+                ),
+            },
+        },
+    ]
+
+    flagged = r.flagged_sinks[:10]
+    if flagged:
+        from .dp_l0_renderer import _sink_overall_icon, _short
+        lines = [f"{_sink_overall_icon(s)} `{_short(s.sink)}`" for s in flagged]
+        if len(r.flagged_sinks) > 10:
+            lines.append(f"_+{len(r.flagged_sinks) - 10} more_")
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}})
 
     blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": "Full breakdown → canvas below ↓"}]})
