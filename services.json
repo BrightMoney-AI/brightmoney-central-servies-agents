@@ -357,7 +357,10 @@
       "/___proxy_subdomain_whm/login/",
       "/dashboard/cs/card_chargeback/validate/",
       "/dashboard/cs/odfee_refund/review/approve/",
-      "/dashboard/cs/card_chargeback/review/get/paginated/"
+      "/dashboard/cs/card_chargeback/review/get/paginated/",
+      "/dashboard/payments/rent_reporting/get_entries/",
+      "/dashboard/cs/bsa/statement/download/"
+
     ]
   },
   {

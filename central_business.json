@@ -188,7 +188,9 @@
     "query_name": "flow_user_activity_failure_59",
     "section": "Mixpanel",
     "metric_type": "failure_count",
-    "query": "sum(increase(MIXPANEL_FLOW_USER_ACTIVITY_FAILED[24h]))"
+    "query": "sum(increase(MIXPANEL_FLOW_USER_ACTIVITY_FAILED[24h]))",
+    "warn_above": 2000,
+    "crit_above": 3000
   },
   {
     "display_name": "Flow User Property Success Rate",
@@ -324,8 +326,8 @@
     "section": "Mixpanel",
     "metric_type": "failure_count",
     "query": "sum(increase(MIXPANEL_CONSUMER_EVENTS_SERIALIZATION_FAILED[24h]))",
-    "crit_above": 1000,
-    "warn_above": 500
+    "crit_above": 200000,
+    "warn_above": 250000
   },
   {
     "display_name": "Batch Event Failed Count",
@@ -707,7 +709,9 @@
     "query_name": "5xx_errors_47",
     "section": "Firestore",
     "metric_type": "failure_count",
-    "query": "sum(django_http_requests_latency_seconds_by_view_method_count{job=\"platform_statsd_metrics\", name=~\"p-firestore-app-server-.*\",status=~\"5..\"}[24h])"
+    "query": "sum(django_http_requests_latency_seconds_by_view_method_count{job=\"platform_statsd_metrics\", name=~\"p-firestore-app-server-.*\",status=~\"5..\"}[24h])",
+    "warn_above": 20000,
+    "crit_above": 25000
   },
   {
     "display_name": "Processing Rate",
@@ -750,8 +754,8 @@
     "section": "Webhook Gateway",
     "metric_type": "failure_count",
     "query": "sum(increase(django_http_responses_total_by_status{name=~\"px-bwg-app-server-.*\", status=~\"5.*\"}[24h]))",
-    "crit_above": 1000,
-    "warn_above": 500
+    "crit_above": 3500,
+    "warn_above": 2500
   },
   {
     "display_name": "Batch Event Failed Event Count",
