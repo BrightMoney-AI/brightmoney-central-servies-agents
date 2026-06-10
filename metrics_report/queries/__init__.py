@@ -290,6 +290,56 @@ def build_per_endpoint_queries(
     ]
 
 
+# ── Spike Analysis — range query builders (30-min buckets over 24h) ──────────
+# Each PromQL uses `step` as its inner window so when fetched via query_range
+# with the same step, every bucket captures a non-overlapping window of activity.
+# CPU/memory are wrapped in max by() to collapse per-server into one series.
+
+def build_spike_queries(
+    sys_sel: str = "",
+    api_sel: str = "",
+    step: str = "30m",
+    api_request_metric:  str = "django_request_count",
+    api_response_metric: str = "django_http_responses_total_by_status",
+) -> list[tuple[str, str, str, str]]:
+    """Return (metric_name, display_name, unit, promql) for spike-analysis range queries."""
+    w = _wrap(sys_sel)
+    a = _app(sys_sel)
+
+    s_base  = ("{" + api_sel + "}") if api_sel else "{}"
+    s_error = ("{" + api_sel + ', status=~"[^2].."' + "}") if api_sel else '{status=~"[^2].."}'
+    s_lat   = ("{" + api_sel + ', quantile="0.5"' + "}") if api_sel else '{quantile="0.5"}'
+
+    return [
+        (
+            "cpu_usage_pct", "CPU Usage", "%",
+            f'max by () (100 - avg by (instance, name) (rate(node_cpu_seconds_total{{mode="idle"{a}}}[{step}])) * 100)',
+        ),
+        (
+            "memory_usage_pct", "Memory Usage", "%",
+            f'max by () ('
+            f'(avg_over_time(node_memory_MemTotal_bytes{w}[{step}])'
+            f' - avg_over_time(node_memory_MemFree_bytes{w}[{step}])'
+            f' - avg_over_time(node_memory_Cached_bytes{w}[{step}])'
+            f' - avg_over_time(node_memory_Buffers_bytes{w}[{step}]))'
+            f' / avg_over_time(node_memory_MemTotal_bytes{w}[{step}]) * 100)',
+        ),
+        (
+            "api_error_rate_pct", "API Error Rate", "%",
+            f'sum(rate({api_response_metric}{s_error}[{step}]))'
+            f' / sum(rate({api_response_metric}{s_base}[{step}])) * 100',
+        ),
+        (
+            "api_throughput_rps", "API Throughput", "rps",
+            f'sum(rate({api_request_metric}{s_base}[{step}]))',
+        ),
+        (
+            "api_avg_latency_ms", "API Latency (P50)", "ms",
+            f'avg(avg_over_time(django_request_latency_seconds{s_lat}[{step}])) * 1000',
+        ),
+    ]
+
+
 # ── RabbitMQ Queue Depth — instant gauge per queue ────────────────────────────
 
 def build_queue_queries(queues: list[str]) -> list[Query]:

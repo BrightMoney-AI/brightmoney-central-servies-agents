@@ -2,10 +2,15 @@
   {
     "display_name": "UAA Entity Manager",
     "report_group": "UAA Services",
-    "name_patterns": ["p-uaa-em-.*", "p-uaa-entity-manager.*"],
+    "name_patterns": [
+      "p-uaa-em-.*",
+      "p-uaa-entity-manager.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p.*-uaa-entity-manager-.*"],
+    "api_name_patterns": [
+      "p.*-uaa-entity-manager-.*"
+    ],
     "api_exclude_endpoints": [
       "//api/account-meta/v0/get/",
       "//api/accounts/mask_change/"
@@ -22,11 +27,17 @@
   {
     "display_name": "Core UAA",
     "report_group": "UAA Services",
-    "name_patterns": ["p-uaa-core.*"],
+    "name_patterns": [
+      "p-uaa-core.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p.*-uaa-core-.*"],
-    "api_exclude_endpoints": ["/ping/"],
+    "api_name_patterns": [
+      "p.*-uaa-core-.*"
+    ],
+    "api_exclude_endpoints": [
+      "/ping/"
+    ],
     "api_method": "POST",
     "api_request_metric": "django_http_requests_before_middlewares_total",
     "api_response_metric": "django_http_responses_before_middlewares_total",
@@ -39,11 +50,21 @@
   {
     "display_name": "Transaction Insight",
     "report_group": "UAA Services",
-    "name_patterns": ["p-uaa-transaction-insight-.*", "p-uaa-ti-celery.*", "p-transaction-insight-.*"],
+    "name_patterns": [
+      "p-uaa-transaction-insight-.*",
+      "p-uaa-ti-celery.*",
+      "p-transaction-insight-.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p-uaa-transaction-insight-.*"],
-    "api_exclude_endpoints": ["/ping/", "/", "/favicon.ico"],
+    "api_name_patterns": [
+      "p-uaa-transaction-insight-.*"
+    ],
+    "api_exclude_endpoints": [
+      "/ping/",
+      "/",
+      "/favicon.ico"
+    ],
     "rabbitmq_queues": [
       "brightmoney_transaction_insight",
       "uaa_ti_offline_queue"
@@ -52,230 +73,485 @@
   {
     "display_name": "UAA Routing",
     "report_group": "UAA Services",
-    "name_patterns": ["p-uaa-routing-app-server.*"],
+    "name_patterns": [
+      "p-uaa-routing-app-server.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p.*-routing-.*"],
-    "api_exclude_endpoints": ["/ping/", "/", "/PING", "/favicon.ico", "/health/", "/metrics"],
+    "api_name_patterns": [
+      "p.*-routing-.*"
+    ],
+    "api_exclude_endpoints": [
+      "/ping/",
+      "/",
+      "/PING",
+      "/favicon.ico",
+      "/health/",
+      "/metrics"
+    ],
     "api_method": "POST"
   },
   {
     "display_name": "UAA Plaid",
     "report_group": "UAA Services",
-    "name_patterns": ["p-uaa-plaid-.*"],
+    "name_patterns": [
+      "p-uaa-plaid-.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p.*-uaa-plaid-app-.*"],
-    "api_exclude_endpoints": ["/api/webhooks/v0/webhook-handler/", "/ping/"],
+    "api_name_patterns": [
+      "p.*-uaa-plaid-app-.*"
+    ],
+    "api_exclude_endpoints": [
+      "/api/webhooks/v0/webhook-handler/",
+      "/ping/"
+    ],
     "api_method": "POST",
     "api_request_metric": "django_http_responses_total_by_status",
     "api_response_metric": "django_http_responses_before_middlewares_total",
-    "rabbitmq_queues": ["brightmoney_plaid_onboarding"]
+    "rabbitmq_queues": [
+      "brightmoney_plaid_onboarding"
+    ]
   },
   {
     "display_name": "UAA CapOne",
     "report_group": "UAA Services",
-    "name_patterns": ["p-uaa-capone-.*"],
+    "name_patterns": [
+      "p-uaa-capone-.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p.*-uaa-capone-app-.*"],
-    "api_exclude_endpoints": ["/ping/"],
+    "api_name_patterns": [
+      "p.*-uaa-capone-app-.*"
+    ],
+    "api_exclude_endpoints": [
+      "/ping/"
+    ],
     "api_method": "POST",
     "api_request_metric": "django_http_responses_total_by_status",
     "api_response_metric": "django_http_responses_before_middlewares_total",
-    "rabbitmq_queues": ["brightmoney_capitalone_onboarding"]
+    "rabbitmq_queues": [
+      "brightmoney_capitalone_onboarding"
+    ]
   },
   {
     "display_name": "UAA Metadata",
     "report_group": "UAA Services",
-    "name_patterns": ["p.*-uaa-metadata-.*"],
+    "name_patterns": [
+      "p.*-uaa-metadata-.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p.*-uaa-metadata-.*"],
-    "api_exclude_endpoints": ["/ping/"],
+    "api_name_patterns": [
+      "p.*-uaa-metadata-.*"
+    ],
+    "api_exclude_endpoints": [
+      "/ping/"
+    ],
     "api_method": "POST"
   },
   {
     "display_name": "KYC",
     "report_group": "UAA Services",
-    "name_patterns": ["p.*-kyc-app-.*"],
+    "name_patterns": [
+      "p.*-kyc-app-.*"
+    ],
     "system_job": "system_metrics"
   },
   {
     "display_name": "UCB Core",
     "report_group": "UAA Services",
-    "name_patterns": ["p-ucb-core-.*", "p-ucb-gateway-api-.*"],
+    "name_patterns": [
+      "p-ucb-core-.*",
+      "p-ucb-gateway-api-.*"
+    ],
     "system_job": "system_metrics"
   },
   {
     "display_name": "UAA Webhook",
     "report_group": "UAA Services",
-    "name_patterns": ["p-uaa-webhook-.*"],
+    "name_patterns": [
+      "p-uaa-webhook-.*"
+    ],
     "system_job": "system_metrics"
   },
   {
     "display_name": "Superset",
     "report_group": "Data Platform",
-    "name_patterns": ["p-superset-server-01"],
+    "name_patterns": [
+      "p-superset-server-01"
+    ],
     "system_job": "system_metrics"
   },
   {
     "display_name": "Cosmos",
     "report_group": "Data Platform",
-    "name_patterns": ["p-cosmos.*"],
+    "name_patterns": [
+      "p-cosmos.*"
+    ],
     "system_job": "system_metrics"
   },
   {
     "display_name": "Debezium",
     "report_group": "Data Platform",
-    "name_patterns": ["p-debezium.*"],
+    "name_patterns": [
+      "p-debezium.*"
+    ],
     "system_job": "system_metrics"
   },
   {
     "display_name": "Iceberg Sink",
     "report_group": "Data Platform",
-    "name_patterns": ["p-iceberg-sink-.*"],
+    "name_patterns": [
+      "p-iceberg-sink-.*"
+    ],
     "system_job": "system_metrics"
   },
   {
     "display_name": "Apicurio",
     "report_group": "Data Platform",
-    "name_patterns": ["p-dp-apicurio-.*"],
+    "name_patterns": [
+      "p-dp-apicurio-.*"
+    ],
     "system_job": "system_metrics"
   },
   {
     "display_name": "Confluent Schema Registry",
     "report_group": "Data Platform",
-    "name_patterns": ["p-confluent-schema-registry.*"],
+    "name_patterns": [
+      "p-confluent-schema-registry.*"
+    ],
     "system_job": "system_metrics"
   },
   {
     "display_name": "Firestore",
     "report_group": "Central Services",
-    "name_patterns": ["p-firestore-app-.*", "p-firestore-celery-server-.*"],
+    "name_patterns": [
+      "p-firestore-app-.*",
+      "p-firestore-celery-server-.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p-firestore-app-.*", "p-firestore-celery-server-.*", "p.*-firestore-app-.*", "p.*-firestore-celery-server-.*"],
+    "api_name_patterns": [
+      "p-firestore-app-.*",
+      "p-firestore-celery-server-.*",
+      "p.*-firestore-app-.*",
+      "p.*-firestore-celery-server-.*"
+    ],
     "api_method": "POST",
-    "rabbitmq_queues": [".*firestore.*"]
+    "rabbitmq_queues": [
+      ".*firestore.*"
+    ],
+    "api_exclude_endpoints": [
+      "/dns-query",
+      "/query",
+      "/resolve",
+      "/v1/statement",
+      "/wsman",
+      "/___proxy_subdomain_whm/login/"
+    ]
   },
   {
     "display_name": "Narada",
     "report_group": "Central Services",
-    "name_patterns": ["p-narada-app-.*", "p-narada-worker-.*"],
+    "name_patterns": [
+      "p-narada-app-.*",
+      "p-narada-worker-.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p-narada-app-.*", "p-narada-worker-.*", "p.*-narada-app-.*", "p.*-narada-worker-.*"],
+    "api_name_patterns": [
+      "p-narada-app-.*",
+      "p-narada-worker-.*",
+      "p.*-narada-app-.*",
+      "p.*-narada-worker-.*"
+    ],
     "api_method": "POST",
-    "rabbitmq_queues": [".*narada.*"]
+    "rabbitmq_queues": [
+      ".*narada.*"
+    ],
+    "api_exclude_endpoints": [
+      "/dns-query",
+      "/query",
+      "/resolve",
+      "/v1/statement",
+      "/wsman",
+      "/___proxy_subdomain_whm/login/"
+    ]
   },
   {
     "display_name": "Narada Mixpanel",
     "report_group": "Central Services",
-    "name_patterns": ["p-narada-mixpanel-.*"],
+    "name_patterns": [
+      "p-narada-mixpanel-.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p-narada-mixpanel-.*", "p.*-narada-mixpanel-.*"],
+    "api_name_patterns": [
+      "p-narada-mixpanel-.*",
+      "p.*-narada-mixpanel-.*"
+    ],
     "api_method": "POST",
-    "rabbitmq_queues": [".*mixpanel.*"]
+    "rabbitmq_queues": [
+      ".*mixpanel.*"
+    ],
+    "api_exclude_endpoints": [
+      "/dns-query",
+      "/query",
+      "/resolve",
+      "/v1/statement",
+      "/wsman",
+      "/___proxy_subdomain_whm/login/"
+    ]
   },
   {
     "display_name": "Email Management Service",
     "report_group": "Central Services",
-    "name_patterns": ["p-email-management.*"],
+    "name_patterns": [
+      "p-email-management.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p-email-management.*", "p.*-email-management.*"],
+    "api_name_patterns": [
+      "p-email-management.*",
+      "p.*-email-management.*"
+    ],
     "api_method": "POST",
-    "rabbitmq_queues": [".*email_management.*", ".*email.management.*",".*email.*",".*ems.*"]
+    "rabbitmq_queues": [
+      ".*email_management.*",
+      ".*email.management.*",
+      ".*email.*",
+      ".*ems.*"
+    ],
+    "api_exclude_endpoints": [
+      "/dns-query",
+      "/query",
+      "/resolve",
+      "/v1/statement",
+      "/wsman",
+      "/___proxy_subdomain_whm/login/"
+    ]
   },
   {
     "display_name": "WMS",
     "report_group": "Central Services",
-    "name_patterns": ["p-wms-app.*"],
+    "name_patterns": [
+      "p-wms-app.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p-wms-app.*", "p.*-wms-app.*"],
+    "api_name_patterns": [
+      "p-wms-app.*",
+      "p.*-wms-app.*"
+    ],
     "api_method": "POST",
-    "rabbitmq_queues": [".*wms.*"]
+    "rabbitmq_queues": [
+      ".*wms.*"
+    ],
+    "api_exclude_endpoints": [
+      "/dns-query",
+      "/query",
+      "/resolve",
+      "/v1/statement",
+      "/wsman",
+      "/___proxy_subdomain_whm/login/",
+      "/dashboard/cs/card_chargeback/validate/",
+      "/dashboard/cs/odfee_refund/review/approve/",
+      "/dashboard/cs/card_chargeback/review/get/paginated/"
+    ]
   },
   {
     "display_name": "Email Forwarder",
     "report_group": "Central Services",
-    "name_patterns": ["p-narada-email-forwarder-server.*"],
+    "name_patterns": [
+      "p-narada-email-forwarder-server.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p-narada-email-forwarder-server.*", "p.*-narada-email-forwarder-server.*"],
+    "api_name_patterns": [
+      "p-narada-email-forwarder-server.*",
+      "p.*-narada-email-forwarder-server.*"
+    ],
     "api_method": "POST",
-    "rabbitmq_queues": [".*email_forwarder.*", ".*email.forwarder.*"]
+    "rabbitmq_queues": [
+      ".*email_forwarder.*",
+      ".*email.forwarder.*"
+    ],
+    "api_exclude_endpoints": [
+      "/dns-query",
+      "/query",
+      "/resolve",
+      "/v1/statement",
+      "/wsman",
+      "/___proxy_subdomain_whm/login/"
+    ]
   },
   {
     "display_name": "Clevertap Forwarder",
     "report_group": "Central Services",
-    "name_patterns": ["p-narada-clevertap-app-.*", "p-narada-clevertap-worker-.*"],
+    "name_patterns": [
+      "p-narada-clevertap-app-.*",
+      "p-narada-clevertap-worker-.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p-narada-clevertap-app-.*", "p-narada-clevertap-worker-.*", "p.*-narada-clevertap-app-.*", "p.*-narada-clevertap-worker-.*"],
+    "api_name_patterns": [
+      "p-narada-clevertap-app-.*",
+      "p-narada-clevertap-worker-.*",
+      "p.*-narada-clevertap-app-.*",
+      "p.*-narada-clevertap-worker-.*"
+    ],
     "api_method": "POST",
-    "rabbitmq_queues": [".*clevertap.*"]
+    "rabbitmq_queues": [
+      ".*clevertap.*"
+    ],
+    "api_exclude_endpoints": [
+      "/dns-query",
+      "/query",
+      "/resolve",
+      "/v1/statement",
+      "/wsman",
+      "/___proxy_subdomain_whm/login/"
+    ]
   },
   {
     "display_name": "Physical Mail Service",
     "report_group": "Central Services",
-    "name_patterns": ["p-physical-mail-automation.*"],
+    "name_patterns": [
+      "p-physical-mail-automation.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p-physical-mail-automation.*", "p.*-physical-mail-automation.*"],
+    "api_name_patterns": [
+      "p-physical-mail-automation.*",
+      "p.*-physical-mail-automation.*"
+    ],
     "api_method": "POST",
-    "rabbitmq_queues": [".*physical_mail.*", ".*physical.mail.*"]
+    "rabbitmq_queues": [
+      ".*physical_mail.*",
+      ".*physical.mail.*"
+    ],
+    "api_exclude_endpoints": [
+      "/dns-query",
+      "/query",
+      "/resolve",
+      "/v1/statement",
+      "/wsman",
+      "/___proxy_subdomain_whm/login/"
+    ]
   },
   {
     "display_name": "Singular Forwarder",
     "report_group": "Central Services",
-    "name_patterns": ["p-narada-singular-worker.*"],
+    "name_patterns": [
+      "p-narada-singular-worker.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p-narada-singular-worker.*", "p.*-narada-singular-worker.*"],
+    "api_name_patterns": [
+      "p-narada-singular-worker.*",
+      "p.*-narada-singular-worker.*"
+    ],
     "api_method": "POST",
-    "rabbitmq_queues": [".*singular.*"]
+    "rabbitmq_queues": [
+      ".*singular.*"
+    ],
+    "api_exclude_endpoints": [
+      "/dns-query",
+      "/query",
+      "/resolve",
+      "/v1/statement",
+      "/wsman",
+      "/___proxy_subdomain_whm/login/"
+    ]
   },
   {
     "display_name": "Facebook Forwarder",
     "report_group": "Central Services",
-    "name_patterns": ["p-narada-facebook-worker.*"],
+    "name_patterns": [
+      "p-narada-facebook-worker.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p-narada-facebook-worker.*", "p.*-narada-facebook-worker.*"],
+    "api_name_patterns": [
+      "p-narada-facebook-worker.*",
+      "p.*-narada-facebook-worker.*"
+    ],
     "api_method": "POST",
-    "rabbitmq_queues": [".*facebook.*"]
+    "rabbitmq_queues": [
+      ".*facebook.*"
+    ],
+    "api_exclude_endpoints": [
+      "/dns-query",
+      "/query",
+      "/resolve",
+      "/v1/statement",
+      "/wsman",
+      "/___proxy_subdomain_whm/login/"
+    ]
   },
   {
     "display_name": "Snap Forwarder",
     "report_group": "Central Services",
-    "name_patterns": ["p-narada-snap-worker.*"],
+    "name_patterns": [
+      "p-narada-snap-worker.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p-narada-snap-worker.*", "p.*-narada-snap-worker.*"],
+    "api_name_patterns": [
+      "p-narada-snap-worker.*",
+      "p.*-narada-snap-worker.*"
+    ],
     "api_method": "POST",
-    "rabbitmq_queues": [".*snap.*"]
+    "rabbitmq_queues": [
+      ".*snap.*"
+    ],
+    "api_exclude_endpoints": [
+      "/dns-query",
+      "/query",
+      "/resolve",
+      "/v1/statement",
+      "/wsman",
+      "/___proxy_subdomain_whm/login/"
+    ]
   },
   {
     "display_name": "Google Forwarder",
     "report_group": "Central Services",
-    "name_patterns": ["p-google-s2s-server.*"],
+    "name_patterns": [
+      "p-google-s2s-server.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["p-google-s2s-server.*", "p.*-google-s2s-server.*"],
+    "api_name_patterns": [
+      "p-google-s2s-server.*",
+      "p.*-google-s2s-server.*"
+    ],
     "api_method": "POST",
-    "rabbitmq_queues": [".*google.*"]
+    "rabbitmq_queues": [
+      ".*google.*"
+    ],
+    "api_exclude_endpoints": [
+      "/dns-query",
+      "/query",
+      "/resolve",
+      "/v1/statement",
+      "/wsman",
+      "/___proxy_subdomain_whm/login/"
+    ]
   },
   {
     "display_name": "Webhook Gateway",
     "report_group": "Central Services",
-    "name_patterns": ["px-bwg-.*"],
+    "name_patterns": [
+      "px-bwg-.*"
+    ],
     "system_job": "system_metrics",
     "api_job": "platform_statsd_metrics",
-    "api_name_patterns": ["px-bwg-.*", "p.*-bwg-.*"],
+    "api_name_patterns": [
+      "px-bwg-.*",
+      "p.*-bwg-.*"
+    ],
     "api_exclude_endpoints": [
       "/.well-known/skadnetwork/report-attribution/",
       "/wh/twilio-message-webhook-prod/",
@@ -284,9 +560,18 @@
       "/onvif/device_service",
       "/mcp",
       "/sdk",
-      "/wp/xmlrpc.php"
+      "/wp/xmlrpc.php",
+      "/dns-query",
+      "/query",
+      "/resolve",
+      "/v1/statement",
+      "/wsman",
+      "/___proxy_subdomain_whm/login/"
     ],
     "api_method": "POST",
-    "rabbitmq_queues": [".*webhook.*", ".*bwg.*"]
+    "rabbitmq_queues": [
+      ".*webhook.*",
+      ".*bwg.*"
+    ]
   }
 ]

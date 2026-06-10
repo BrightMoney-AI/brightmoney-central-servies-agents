@@ -14,7 +14,9 @@ from .models import (
     ApiMetrics, Endpoint, FlaggingThresholds, L0Report,
     QueueDepth, QueueHealth, Server, ServerMetrics, Status, SystemHealth,
 )
+from .queries import build_spike_queries
 from .renderer import render
+from .spike_analyzer import SpikeResult, analyze as _analyze_spike
 
 
 # ── Status helpers (mirror the original icon logic exactly) ────────────────────
@@ -242,10 +244,57 @@ def to_l0_report(report: MetricsReport, service_name: str = "All Services", show
     )
 
 
+def _build_spike_blocks(results: list[SpikeResult]) -> list[dict]:
+    """Render spike analysis as Slack Block Kit blocks."""
+    lines = []
+    for r in results:
+        if r.is_spiked:
+            emoji  = "🔴"
+            detail = f"{r.spike_count} spike{'s' if r.spike_count > 1 else ''} (worst {r.worst_jump:.1f}×)"
+        elif r.is_elevated:
+            emoji  = "🟡"
+            detail = f"elevated — peak {r.max_avg_ratio:.1f}× avg"
+        else:
+            emoji  = "🟢"
+            detail = "stable"
+        lines.append(
+            f"{emoji}  *{r.display_name}*   "
+            f"avg {r.fmt_avg()}  →  peak {r.fmt_max()}   _{detail}_"
+        )
+    return [
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "⚡  *Spike Analysis* — 24h split into 30-min buckets\n\n"
+                        + "\n".join(lines),
+            },
+        },
+    ]
+
+
 def build_slack_payload(report: MetricsReport, service_name: str = "All Services") -> dict:
     l0 = to_l0_report(report, service_name)
 
     payload = render(l0)
+
+    # Spike analysis — compute from collected range series and append
+    if report.spike_series:
+        spike_meta = {
+            name: (dname, unit)
+            for name, dname, unit, _ in build_spike_queries()
+        }
+        spike_results = [
+            r for r in (
+                _analyze_spike(name, spike_meta[name][0], spike_meta[name][1], series)
+                for name, series in report.spike_series.items()
+                if name in spike_meta
+            )
+            if r is not None
+        ]
+        if spike_results:
+            payload["blocks"] += _build_spike_blocks(spike_results)
 
     # Append failed-query block after render (informational, doesn't affect status)
     if report.failures:

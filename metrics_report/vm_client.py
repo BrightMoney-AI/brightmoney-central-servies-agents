@@ -11,7 +11,8 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-_QUERY_PATH = "/api/v1/query"
+_QUERY_PATH       = "/api/v1/query"
+_QUERY_RANGE_PATH = "/api/v1/query_range"
 
 
 class VMClient:
@@ -74,3 +75,30 @@ class VMClient:
             out.append((server, value))
 
         return sorted(out)
+
+    async def query_range(self, promql: str, hours: int = 24, step: str = "30m") -> list[float]:
+        """Fetch a time series over the past `hours` as one value per `step` interval.
+
+        Returns bucket values oldest-first.  Used for spike analysis — each bucket
+        is the aggregated value within that step window (e.g. rate([30m]) at 30m step
+        gives non-overlapping 30-minute windows).
+        """
+        assert self._client is not None, "VMClient must be used as async context manager"
+        import time as _time
+        end   = int(_time.time())
+        start = end - hours * 3600
+        resp  = await self._client.get(
+            _QUERY_RANGE_PATH,
+            params={"query": promql, "start": start, "end": end, "step": step},
+        )
+        resp.raise_for_status()
+        data    = resp.json()
+        results = data.get("data", {}).get("result", [])
+        if not results:
+            log.debug("No range results for query: %s", promql)
+            return []
+        return [
+            float(v[1])
+            for v in results[0].get("values", [])
+            if v[1] not in ("NaN", "+Inf", "-Inf")
+        ]

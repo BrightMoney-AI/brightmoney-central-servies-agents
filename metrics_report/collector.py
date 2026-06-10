@@ -13,7 +13,7 @@ from typing import Optional
 
 from .config import settings
 from .gateway import FailedQuery, MetricsGateway
-from .queries import build_api_queries, build_per_endpoint_queries, build_queue_queries, build_system_queries
+from .queries import build_api_queries, build_per_endpoint_queries, build_queue_queries, build_spike_queries, build_system_queries
 from .services import ServiceDef
 from .vm_client import VMClient
 
@@ -30,6 +30,8 @@ class MetricsReport:
     endpoint_values: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
     # Per-queue RabbitMQ depth — metric name → [(queue_name, value), ...]
     queue_values: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
+    # Spike analysis — metric_name → list of 30-min bucket values (oldest first)
+    spike_series: dict[str, list[float]] = field(default_factory=dict)
     failures: list[FailedQuery] = field(default_factory=list)
 
 
@@ -111,10 +113,27 @@ async def collect(
             )
             queue_values[query.name] = result or []
 
+    # Spike analysis — best-effort range queries, failures don't break the report
+    spike_series: dict[str, list[float]] = {}
+    api_request_metric  = service.api_request_metric  if service else "django_request_count"
+    api_response_metric = service.api_response_metric if service else "django_http_responses_total_by_status"
+    for metric_name, _, _, promql in build_spike_queries(
+        sys_sel, api_sel,
+        api_request_metric=api_request_metric,
+        api_response_metric=api_response_metric,
+    ):
+        try:
+            buckets = await vm_client.query_range(promql)
+            if buckets:
+                spike_series[metric_name] = buckets
+        except Exception as exc:
+            log.warning("Spike query failed [%s]: %s", metric_name, exc)
+
     return MetricsReport(
         values=values,
         server_values=server_values,
         endpoint_values=endpoint_values,
         queue_values=queue_values,
+        spike_series=spike_series,
         failures=list(gateway.failures),
     )
