@@ -16,13 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from dataclasses import dataclass, field
 from typing import Optional
-
-# Debezium connector names in services.json may carry version suffixes (_v1, _v2, …)
-# that are absent from the heartbeat topic name.  Strip them as a fallback.
-_VERSION_SUFFIX_RE = re.compile(r"_v\d+$")
 
 from .vm_client import VMClient
 
@@ -45,12 +40,13 @@ _VM_PATTERN = "p-iceberg-sink-.*|p-debezium.*"
 @dataclass
 class SinkHealth:
     sink: str
-    debezium: Optional[str]             # None → no active Debezium connector
+    debezium: Optional[str]           # Debezium connector name (reference only)
+    heartbeat_topic: Optional[str]    # exact Kafka topic — None means no heartbeat configured
 
     coord_lag: Optional[float] = None         # MaxOffsetLag (instant)
     offset_lag: Optional[float] = None        # SumOffsetLag (instant)
     offset_lag_delta: Optional[float] = None  # delta([24h]); positive = still growing
-    heartbeat_rate: Optional[float] = None    # msg/min
+    heartbeat_rate: Optional[float] = None    # msg/5m window
 
     @property
     def coord_status(self) -> str:
@@ -82,7 +78,7 @@ class SinkHealth:
 
     @property
     def heartbeat_status(self) -> str:
-        if self.debezium is None:
+        if self.heartbeat_topic is None:
             return "no_connector"
         if self.heartbeat_rate is None:
             return "unknown"
@@ -92,7 +88,11 @@ class SinkHealth:
 
     @property
     def is_flagged(self) -> bool:
-        return self.coord_status in ("warning", "critical") or self.lag_increasing
+        return (
+            self.coord_status in ("warning", "critical")
+            or self.lag_increasing
+            or self.heartbeat_status in ("critical", "unknown")
+        )
 
 
 @dataclass
@@ -115,12 +115,17 @@ class VMDiskHealth:
 
 @dataclass
 class DPL0Report:
-    sinks: list[SinkHealth] = field(default_factory=list)
+    sinks: list[SinkHealth] = field(default_factory=list)           # CDC sinks
+    kafka_sinks: list[SinkHealth] = field(default_factory=list)     # plain Kafka sinks
     vm_disks: list[VMDiskHealth] = field(default_factory=list)
 
     @property
     def flagged_sinks(self) -> list[SinkHealth]:
         return [s for s in self.sinks if s.is_flagged]
+
+    @property
+    def flagged_kafka_sinks(self) -> list[SinkHealth]:
+        return [s for s in self.kafka_sinks if s.is_flagged]
 
     @property
     def flagged_vms(self) -> list[VMDiskHealth]:
@@ -129,10 +134,16 @@ class DPL0Report:
 
 # ── main collector ─────────────────────────────────────────────────────────────
 
-async def collect_dp_l0(vm: VMClient, cdc_sinks: list[dict]) -> DPL0Report:
-    """Batch-collect CDC pipeline health in 5 concurrent PromQL queries."""
-    sink_debezium = {s["sink"]: s.get("debezium") for s in cdc_sinks}
-    known_sinks   = set(sink_debezium.keys())
+async def collect_dp_l0(
+    vm: VMClient,
+    cdc_sinks: list[dict],
+    kafka_sinks: list[str] | None = None,
+) -> DPL0Report:
+    """Batch-collect CDC + Kafka sink pipeline health in 5 concurrent PromQL queries."""
+    sink_debezium = {s["sink"]: s.get("debezium")        for s in cdc_sinks}
+    sink_hb_topic = {s["sink"]: s.get("heartbeat_topic") for s in cdc_sinks}
+    kafka_sink_names = set(kafka_sinks or [])
+    known_sinks   = set(sink_debezium.keys()) | kafka_sink_names
 
     coord_lag_q = (
         'kafka_consumer_group_ConsumerLagMetrics_Value'
@@ -147,10 +158,11 @@ async def collect_dp_l0(vm: VMClient, cdc_sinks: list[dict]) -> DPL0Report:
         'delta(kafka_consumer_group_ConsumerLagMetrics_Value'
         '{groupId=~"cg-control-.*", name="SumOffsetLag"}[24h])'
     )
-    # topic format: "__debezium-heartbeat.{connector}.*.*"  (multi-segment, unescaped dot)
+    # Heartbeat topics are CDC event topics: cdc_xxx.schema.debezium_*heartbeat*
+    # Match broadly — exact lookup is done in Python against heartbeat_topic field.
     heartbeat_q = (
         'rate(kafka_server_BrokerTopicMetrics_Count'
-        '{name="MessagesInPerSec", topic=~"__debezium-heartbeat.*.*.*"}[5m]) * 300'
+        '{name="MessagesInPerSec", topic=~"cdc_.*debezium.*"}[5m]) * 300'
     )
     disk_q = (
         f'(node_filesystem_size_bytes{{mountpoint="/", device!~"rootfs",'
@@ -172,27 +184,42 @@ async def collect_dp_l0(vm: VMClient, cdc_sinks: list[dict]) -> DPL0Report:
     coord_index  = _index_coord(coord_raw,  known_sinks)
     offset_index = _index_offset(offset_raw, known_sinks)
     delta_index  = _index_offset(delta_raw,  known_sinks)
-    hb_index     = _index_heartbeat(heartbeat_raw)
+    # Index heartbeat by exact topic name — no fuzzy matching needed
+    hb_index: dict[str, float] = dict(heartbeat_raw)
 
-    sinks: list[SinkHealth] = []
+    cdc_sink_health: list[SinkHealth] = []
     for sink_name in sorted(sink_debezium):
-        debezium = sink_debezium[sink_name]
-        sinks.append(SinkHealth(
+        hb_topic = sink_hb_topic.get(sink_name)
+        cdc_sink_health.append(SinkHealth(
             sink=sink_name,
-            debezium=debezium,
+            debezium=sink_debezium[sink_name],
+            heartbeat_topic=hb_topic,
             coord_lag=coord_index.get(sink_name),
             offset_lag=offset_index.get(sink_name),
             offset_lag_delta=delta_index.get(sink_name),
-            heartbeat_rate=_lookup_heartbeat(hb_index, debezium) if debezium else None,
+            heartbeat_rate=hb_index.get(hb_topic) if hb_topic else None,
+        ))
+
+    kafka_sink_health: list[SinkHealth] = []
+    for sink_name in sorted(kafka_sink_names):
+        kafka_sink_health.append(SinkHealth(
+            sink=sink_name,
+            debezium=None,
+            heartbeat_topic=None,
+            coord_lag=coord_index.get(sink_name),
+            offset_lag=offset_index.get(sink_name),
+            offset_lag_delta=delta_index.get(sink_name),
+            heartbeat_rate=None,
         ))
 
     vm_disks = [VMDiskHealth(vm_name=name, disk_pct=pct) for name, pct in disk_raw]
     log.info(
-        "DP L0 collected: %d sinks (%d flagged), %d VMs (%d flagged).",
-        len(sinks), sum(1 for s in sinks if s.is_flagged),
+        "DP L0 collected: %d CDC sinks (%d flagged), %d Kafka sinks (%d flagged), %d VMs (%d flagged).",
+        len(cdc_sink_health), sum(1 for s in cdc_sink_health if s.is_flagged),
+        len(kafka_sink_health), sum(1 for s in kafka_sink_health if s.is_flagged),
         len(vm_disks), sum(1 for v in vm_disks if v.is_flagged),
     )
-    return DPL0Report(sinks=sinks, vm_disks=vm_disks)
+    return DPL0Report(sinks=cdc_sink_health, kafka_sinks=kafka_sink_health, vm_disks=vm_disks)
 
 
 # ── label-to-sink-name helpers ─────────────────────────────────────────────────
@@ -227,55 +254,6 @@ def _index_offset(raw: list[tuple[str, float]], known: set[str]) -> dict[str, fl
     return out
 
 
-def _index_heartbeat(raw: list[tuple[str, float]]) -> dict[str, float]:
-    """topic=__debezium-heartbeat.{connector}.*.*  →  {connector: summed_rate}
-
-    Multiple sub-topics for the same connector (e.g. different partitions) are summed.
-    Connector name is the second dot-separated segment.
-    """
-    out: dict[str, float] = {}
-    for topic, val in raw:
-        parts = topic.split(".")
-        if len(parts) < 2:
-            continue
-        connector = parts[1]   # segment after "__debezium-heartbeat"
-        out[connector] = out.get(connector, 0.0) + val
-    return out
-
-
-def _lookup_heartbeat(hb_index: dict[str, float], debezium: str) -> Optional[float]:
-    """Look up heartbeat rate with three-tier fallback.
-
-    Connector names in services.json can differ from the heartbeat topic name
-    in two ways:
-      1. Version suffix:  cdc_asset_manager_prod_v1  →  topic cdc_asset_manager_prod
-      2. Abbreviated name: cdc_uaa_be_01_v2           →  topic cdc_uaa_be
-
-    Strategy:
-      1. Exact match
-      2. Strip trailing _vN suffix, exact match
-      3. Longest-prefix match — find the topic key K where debezium.startswith(K + "_"),
-         picking the longest K to avoid false positives
-    """
-    # 1. Exact
-    if debezium in hb_index:
-        return hb_index[debezium]
-
-    # 2. Version suffix stripped (cdc_xxx_v1 → cdc_xxx)
-    stripped = _VERSION_SUFFIX_RE.sub("", debezium)
-    if stripped != debezium and stripped in hb_index:
-        return hb_index[stripped]
-
-    # 3. Longest prefix match (cdc_uaa_be_01_v2 → cdc_uaa_be)
-    best_key: Optional[str] = None
-    best_len = 0
-    for key in hb_index:
-        if debezium.startswith(key + "_") and len(key) > best_len:
-            best_key, best_len = key, len(key)
-    if best_key is not None:
-        return hb_index[best_key]
-
-    return None
 
 
 async def _safe_vec(vm: VMClient, promql: str, id_label: str) -> list[tuple[str, float]]:

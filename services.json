@@ -227,86 +227,436 @@
     "display_name": "Data Platform L0",
     "report_group": "Data Platform",
     "kafka_cdc_sinks": [
-      {"sink": "ai-assistant-iceberg-cdc-sink-v2", "debezium": "cdc_ai_assistant"},
-      {"sink": "ai-course-iceberg-cdc-sink-v2", "debezium": "cdc_ai_course"},
-      {"sink": "asset-manager-prod-iceberg-cdc-sink-v2", "debezium": "cdc_asset_manager_prod_v1"},
-      {"sink": "backend-master-iceberg-cdc-sink-v2", "debezium": "cdc_uaa_be_01_v2"},
-      {"sink": "bank-integration-iceberg-cdc-sink-v2", "debezium": "cdc_bank_integration"},
-      {"sink": "banking-platform-4-iceberg-cdc-sink-v3", "debezium": null},
-      {"sink": "banking-platform-iceberg-cdc-sink-v2", "debezium": "cdc_banking_platform"},
-      {"sink": "banking-platform-mr-2-iceberg-cdc-sink-v2", "debezium": "cdc_banking_platform_mr_2"},
-      {"sink": "banking-platform-mr-3-iceberg-cdc-sink-v2", "debezium": "cdc_banking_platform_mr_3"},
-      {"sink": "banking-platform-mr-4-iceberg-cdc-sink-v2", "debezium": "cdc_banking_platform_mr_4"},
-      {"sink": "banking-platform-mr-5-iceberg-cdc-sink-v2", "debezium": "cdc_banking_platform_mr_5"},
-      {"sink": "banking-platform-mr-6-cdc-sink-v2", "debezium": "cdc_banking_platform_mr_6"},
-      {"sink": "banking-risk-iceberg-cdc-sink-v2", "debezium": "cdc_banking_risk"},
-      {"sink": "brightmoney-account-verification-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_account_verification"},
-      {"sink": "brightmoney-affiliate-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_affiliate_v2"},
-      {"sink": "brightmoney-agent-orchestrator-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_agent_orchestrator"},
-      {"sink": "brightmoney-akoya-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_akoya"},
-      {"sink": "brightmoney-anonymous-user-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_anonymous_user"},
-      {"sink": "brightmoney-backend-master-value-engine-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_backend_master_value_engine_v2"},
-      {"sink": "brightmoney-bifrost-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_bifrost"},
-      {"sink": "brightmoney-capitalone-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_capitalone"},
-      {"sink": "brightmoney-continental-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_continental_v2"},
-      {"sink": "brightmoney-encapsulation-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_encapsulation"},
-      {"sink": "brightmoney-evolve-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_evolve"},
-      {"sink": "brightmoney-evolve-migration-new-iceberg-cdc-sink-v2", "debezium": "cdc_evolve_migration_new_connector"},
-      {"sink": "brightmoney-firestore-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_firestore"},
-      {"sink": "brightmoney-google-s2s-forwarder-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_google_s2s_forwarder"},
-      {"sink": "brightmoney-kyc-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_kyc_v1"},
-      {"sink": "brightmoney-metadata-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_metadata"},
-      {"sink": "brightmoney-modelstore-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_modelstore"},
-      {"sink": "brightmoney-offers-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_offers_v2"},
-      {"sink": "brightmoney-olt-2-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_olt_2"},
-      {"sink": "brightmoney-orum-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_orum"},
-      {"sink": "brightmoney-physical-mail-service-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_physical_mail_service"},
-      {"sink": "brightmoney-prediction-service-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_prediction_service"},
-      {"sink": "brightmoney-rental-credit-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_rental_credit_v2"},
-      {"sink": "brightmoney-reporting-service-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_reporting_service"},
-      {"sink": "brightmoney-shield-db-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_shield_db"},
-      {"sink": "brightmoney-stripe-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_stripe"},
-      {"sink": "brightmoney-uaa-crbaa-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_uaa_crbaa"},
-      {"sink": "brightmoney-ucb-crbaa-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_ucb_crbaa"},
-      {"sink": "brightmoney-underwriting-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_underwriting"},
-      {"sink": "brigthmoney-refers-db-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_refers_db_v1"},
-      {"sink": "collection-system-collections-iceberg-cdc-sink-v2", "debezium": "cdc_collection_system"},
-      {"sink": "core-uaa-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_core_uaa"},
-      {"sink": "core-ucb-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_core_ucb"},
-      {"sink": "cosmos-db-iceberg-cdc-sink-v2", "debezium": "cdc_cosmos_db"},
-      {"sink": "eks-airflow-platform-iceberg-cdc-sink-v2", "debezium": "cdc_eks_airflow_platform"},
-      {"sink": "ems-email-iceberg-cdc-sink-v2", "debezium": "cdc_ems_email"},
-      {"sink": "entity-manager-iceberg-cdc-sink-v2", "debezium": "cdc_uaa_em_02"},
-      {"sink": "equifaxapp-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_ucb_equifaxapp"},
-      {"sink": "experiment-service-iceberg-cdc-sink-v2", "debezium": "cdc_experiment_service_v1"},
-      {"sink": "financial-management-db-allocation-service-iceberg-cdc-sink-v2", "debezium": "cdc_financial_management_db_allocation_service_v1"},
-      {"sink": "financial-management-db-collections-iceberg-cdc-sink-v2", "debezium": "cdc_financial_management_db_collections_v1"},
-      {"sink": "financial-management-db-iceberg-cdc-sink-v3", "debezium": "cdc_financial_management_db_v1"},
-      {"sink": "financial-management-db-smart-roundups-iceberg-cdc-sink-v2", "debezium": "cdc_financial_management_db_smart_roundups"},
-      {"sink": "financial-management-db-submission-service-iceberg-cdc-sink-v2", "debezium": "cdc_financial_management_db_submission_service_v1"},
-      {"sink": "fiserv-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_fiserv"},
-      {"sink": "narada-clevertap-iceberg-cdc-sink-v2", "debezium": "cdc_narada_clevertap"},
-      {"sink": "narada-email-forwarder-iceberg-cdc-sink-v2", "debezium": "cdc_narada_email_forwarder"},
-      {"sink": "narada-facebook-iceberg-cdc-sink-v2", "debezium": "cdc_narada_facebook"},
-      {"sink": "narada-mixpanel-iceberg-cdc-sink-v2", "debezium": "cdc_archival_narada_mixpanel_01"},
-      {"sink": "narada-prod-iceberg-cdc-sink-v2", "debezium": "cdc_narada_prod"},
-      {"sink": "narada-singular-iceberg-cdc-sink-v2", "debezium": "cdc_narada_singular"},
-      {"sink": "payment-rails-iceberg-cdc-sink-v2", "debezium": "cdc_payment_rails_v2"},
-      {"sink": "payment-rails-migration-iceberg-cdc-sink-v2", "debezium": "cdc_payment_rails_migration_connector"},
-      {"sink": "payments-credit-iceberg-cdc-sink-v2", "debezium": "cdc_credit_01"},
-      {"sink": "payments-db-cms-iceberg-cdc-sink-v2", "debezium": "cdc_payments_db_cms"},
-      {"sink": "payments-payment-client-iceberg-cdc-sink-v2", "debezium": "cdc_payments_db__payment_client"},
-      {"sink": "payments-public-iceberg-cdc-sink-v2", "debezium": "cdc_payments_db"},
-      {"sink": "plaid-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_plaid"},
-      {"sink": "referral-service-iceberg-cdc-sink-v2", "debezium": "cdc_referral_service_v1"},
-      {"sink": "subscription-management-iceberg-cdc-sink-v2", "debezium": "cdc_subscription_management"},
-      {"sink": "teller-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_teller"},
-      {"sink": "transaction-insights-iceberg-cdc-sink-v2", "debezium": "cdc_uaa_ti_01"},
-      {"sink": "transunionapp-iceberg-cdc-sink-v2", "debezium": "cdc_brightmoney_ucb_transunionapp"},
-      {"sink": "uaa-brightapp-iceberg-cdc-sink-v2", "debezium": "cdc_uaa_brightapp"},
-      {"sink": "unified-backoffice-iceberg-cdc-sink-v2", "debezium": "cdc_unified_backoffice"},
-      {"sink": "unified-banking-interface-iceberg-cdc-sink-v2", "debezium": "cdc_unified_banking_interface"},
-      {"sink": "webhook-db-iceberg-cdc-sink-v2", "debezium": "cdc_webhook_db_v1"}
+      {
+        "sink": "ai-assistant-iceberg-cdc-sink-v2",
+        "debezium": "cdc_ai_assistant",
+        "heartbeat_topic": "cdc_ai_assistant.public.debezium_heartbeat_ai_assistant"
+      },
+      {
+        "sink": "ai-course-iceberg-cdc-sink-v2",
+        "debezium": "cdc_ai_course",
+        "heartbeat_topic": "cdc_ai_course.public.debezium_heartbeat_ai_course"
+      },
+      {
+        "sink": "asset-manager-prod-iceberg-cdc-sink-v2",
+        "debezium": "cdc_asset_manager_prod_v1",
+        "heartbeat_topic": "cdc_asset_manager_prod.public.debezium_heartbeat_asset_manager_prod"
+      },
+      {
+        "sink": "backend-master-iceberg-cdc-sink-v2",
+        "debezium": "cdc_uaa_be_01_v2",
+        "heartbeat_topic": "cdc_uaa_be.public.debezium_core_be_heartbeat"
+      },
+      {
+        "sink": "bank-integration-iceberg-cdc-sink-v2",
+        "debezium": "cdc_bank_integration",
+        "heartbeat_topic": "cdc_bank_integration.public.debezium_heartbeat_bank_integration"
+      },
+      {
+        "sink": "banking-platform-4-iceberg-cdc-sink-v3",
+        "debezium": null,
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "banking-platform-iceberg-cdc-sink-v2",
+        "debezium": "cdc_banking_platform",
+        "heartbeat_topic": "cdc_banking_platform.public.debezium_heartbeat_banking_platform"
+      },
+      {
+        "sink": "banking-platform-mr-2-iceberg-cdc-sink-v2",
+        "debezium": "cdc_banking_platform_mr_2",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "banking-platform-mr-3-iceberg-cdc-sink-v2",
+        "debezium": "cdc_banking_platform_mr_3",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "banking-platform-mr-4-iceberg-cdc-sink-v2",
+        "debezium": "cdc_banking_platform_mr_4",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "banking-platform-mr-5-iceberg-cdc-sink-v2",
+        "debezium": "cdc_banking_platform_mr_5",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "banking-platform-mr-6-cdc-sink-v2",
+        "debezium": "cdc_banking_platform_mr_6",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "banking-risk-iceberg-cdc-sink-v2",
+        "debezium": "cdc_banking_risk",
+        "heartbeat_topic": "cdc_banking_risk.public.debezium_heartbeat_banking_risk"
+      },
+      {
+        "sink": "brightmoney-account-verification-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_account_verification",
+        "heartbeat_topic": "cdc_brightmoney_account_verification.public.debezium_heartbeat_brightmoney_account_verification"
+      },
+      {
+        "sink": "brightmoney-affiliate-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_affiliate_v2",
+        "heartbeat_topic": "cdc_brightmoney_affiliate.public.debezium_heartbeat_brightmoney_affiliate"
+      },
+      {
+        "sink": "brightmoney-agent-orchestrator-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_agent_orchestrator",
+        "heartbeat_topic": "cdc_brightmoney_agent_orchestrator.public.debezium_heartbeat_brightmoney_agent_orchestrator"
+      },
+      {
+        "sink": "brightmoney-akoya-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_akoya",
+        "heartbeat_topic": "cdc_brightmoney_akoya.public.debezium_heartbeat_brightmoney_akoya"
+      },
+      {
+        "sink": "brightmoney-anonymous-user-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_anonymous_user",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "brightmoney-backend-master-value-engine-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_backend_master_value_engine_v2",
+        "heartbeat_topic": "cdc_brightmoney_backend_master_value_engine.value_engine.debezium_heartbeat_brightmoney_backend_master_value_engine"
+      },
+      {
+        "sink": "brightmoney-bifrost-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_bifrost",
+        "heartbeat_topic": "cdc_brightmoney_bifrost.public.debezium_heartbeat_brightmoney_bifrost"
+      },
+      {
+        "sink": "brightmoney-capitalone-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_capitalone",
+        "heartbeat_topic": "cdc_brightmoney_capitalone.public.debezium_heartbeat_brightmoney_capitalone"
+      },
+      {
+        "sink": "brightmoney-continental-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_continental_v2",
+        "heartbeat_topic": "cdc_brightmoney_continental.public.debezium_heartbeat_brightmoney_continental"
+      },
+      {
+        "sink": "brightmoney-encapsulation-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_encapsulation",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "brightmoney-evolve-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_evolve",
+        "heartbeat_topic": "cdc_brightmoney_evolve.public.debezium_heartbeat_brightmoney_evolve"
+      },
+      {
+        "sink": "brightmoney-evolve-migration-new-iceberg-cdc-sink-v2",
+        "debezium": "cdc_evolve_migration_new_connector",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "brightmoney-firestore-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_firestore",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "brightmoney-google-s2s-forwarder-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_google_s2s_forwarder",
+        "heartbeat_topic": "cdc_brightmoney_google_s2s_forwarder.public.debezium_heartbeat_brightmoney_google_s2s_forwarder"
+      },
+      {
+        "sink": "brightmoney-kyc-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_kyc_v1",
+        "heartbeat_topic": "cdc_brightmoney_kyc.public.debezium_heartbeat"
+      },
+      {
+        "sink": "brightmoney-metadata-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_metadata",
+        "heartbeat_topic": "cdc_brightmoney_metadata.public.debezium_heartbeat_brightmoney_metadata"
+      },
+      {
+        "sink": "brightmoney-modelstore-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_modelstore",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "brightmoney-offers-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_offers_v2",
+        "heartbeat_topic": "cdc_brightmoney_offers.public.debezium_brightmoney_offers_heartbeat"
+      },
+      {
+        "sink": "brightmoney-olt-2-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_olt_2",
+        "heartbeat_topic": "cdc_brightmoney_olt_2.public.debezium_heartbeat_brightmoney_olt_2"
+      },
+      {
+        "sink": "brightmoney-orum-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_orum",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "brightmoney-physical-mail-service-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_physical_mail_service",
+        "heartbeat_topic": "cdc_brightmoney_physical_mail_service.public.debezium_heartbeat_brightmoney_physical_mail_service"
+      },
+      {
+        "sink": "brightmoney-prediction-service-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_prediction_service",
+        "heartbeat_topic": "cdc_brightmoney_prediction_service.public.debezium_heartbeat_brightmoney_prediction_service"
+      },
+      {
+        "sink": "brightmoney-rental-credit-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_rental_credit_v2",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "brightmoney-reporting-service-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_reporting_service",
+        "heartbeat_topic": "cdc_brightmoney_reporting_service.public.debezium_heartbeat_brightmoney_reporting_service"
+      },
+      {
+        "sink": "brightmoney-shield-db-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_shield_db",
+        "heartbeat_topic": "cdc_brightmoney_shield_db.public.debezium_heartbeat_brightmoney_shield_db"
+      },
+      {
+        "sink": "brightmoney-stripe-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_stripe",
+        "heartbeat_topic": "cdc_brightmoney_stripe.public.debezium_heartbeat_brightmoney_stripe"
+      },
+      {
+        "sink": "brightmoney-uaa-crbaa-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_uaa_crbaa",
+        "heartbeat_topic": "cdc_brightmoney_uaa_crbaa.public.debezium_heartbeat_brightmoney_uaa_crbaa"
+      },
+      {
+        "sink": "brightmoney-ucb-crbaa-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_ucb_crbaa",
+        "heartbeat_topic": "cdc_brightmoney_ucb_crbaa.public.debezium_heartbeat_brightmoney_ucb_crbaa"
+      },
+      {
+        "sink": "brightmoney-underwriting-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_underwriting",
+        "heartbeat_topic": "cdc_brightmoney_underwriting.public.debezium_heartbeat_brightmoney_underwriting"
+      },
+      {
+        "sink": "brigthmoney-refers-db-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_refers_db_v1",
+        "heartbeat_topic": "cdc_brightmoney_refers_db.persona_app.debezium_heartbeat_brightmoney_refers_db__persona_app"
+      },
+      {
+        "sink": "collection-system-collections-iceberg-cdc-sink-v2",
+        "debezium": "cdc_collection_system",
+        "heartbeat_topic": "cdc_collection_system.collections.debezium_heartbeat_collection_system"
+      },
+      {
+        "sink": "core-uaa-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_core_uaa",
+        "heartbeat_topic": "cdc_brightmoney_core_uaa.public.debezium_heartbeat_brightmoney_core_uaa"
+      },
+      {
+        "sink": "core-ucb-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_core_ucb",
+        "heartbeat_topic": "cdc_brightmoney_core_ucb.public.debezium_ucb_heartbeat"
+      },
+      {
+        "sink": "cosmos-db-iceberg-cdc-sink-v2",
+        "debezium": "cdc_cosmos_db",
+        "heartbeat_topic": "cdc_cosmos_db.public.debezium_heartbeat_cosmos_db"
+      },
+      {
+        "sink": "eks-airflow-platform-iceberg-cdc-sink-v2",
+        "debezium": "cdc_eks_airflow_platform",
+        "heartbeat_topic": "cdc_eks_airflow_platform.public.debezium_heartbeat_eks_airflow_platform"
+      },
+      {
+        "sink": "ems-email-iceberg-cdc-sink-v2",
+        "debezium": "cdc_ems_email",
+        "heartbeat_topic": "cdc_ems_email.public.debezium_heartbeat_ems_email"
+      },
+      {
+        "sink": "entity-manager-iceberg-cdc-sink-v2",
+        "debezium": "cdc_uaa_em_02",
+        "heartbeat_topic": "cdc_uaa_em.public.debezium_uaa_em_heartbeat"
+      },
+      {
+        "sink": "equifaxapp-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_ucb_equifaxapp",
+        "heartbeat_topic": "cdc_brightmoney_ucb_equifaxapp.public.debezium_ucb_efx_heartbeat"
+      },
+      {
+        "sink": "experiment-service-iceberg-cdc-sink-v2",
+        "debezium": "cdc_experiment_service_v1",
+        "heartbeat_topic": "cdc_experiment_service.public.debezium_experiment_service_heartbeat"
+      },
+      {
+        "sink": "financial-management-db-allocation-service-iceberg-cdc-sink-v2",
+        "debezium": "cdc_financial_management_db_allocation_service_v1",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "financial-management-db-collections-iceberg-cdc-sink-v2",
+        "debezium": "cdc_financial_management_db_collections_v1",
+        "heartbeat_topic": "cdc_financial_management_db_collections.collection_goal_service.debezium_heartbeat_financial_management_db_collections"
+      },
+      {
+        "sink": "financial-management-db-iceberg-cdc-sink-v3",
+        "debezium": "cdc_financial_management_db_v1",
+        "heartbeat_topic": "cdc_financial_management_db.plan_management.debezium_financial_management_heartbeat"
+      },
+      {
+        "sink": "financial-management-db-smart-roundups-iceberg-cdc-sink-v2",
+        "debezium": "cdc_financial_management_db_smart_roundups",
+        "heartbeat_topic": "cdc_financial_management_db_smart_roundups.smart_roundups.debezium_heartbeat_financial_management_db_smart_roundups"
+      },
+      {
+        "sink": "financial-management-db-submission-service-iceberg-cdc-sink-v2",
+        "debezium": "cdc_financial_management_db_submission_service_v1",
+        "heartbeat_topic": "cdc_financial_management_db_submission_service.submission_service.debezium_heartbeat_financial_management_db_submission_service"
+      },
+      {
+        "sink": "fiserv-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_fiserv",
+        "heartbeat_topic": "cdc_brightmoney_fiserv.public.debezium_fiserv_heartbeat"
+      },
+      {
+        "sink": "narada-clevertap-iceberg-cdc-sink-v2",
+        "debezium": "cdc_narada_clevertap",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "narada-email-forwarder-iceberg-cdc-sink-v2",
+        "debezium": "cdc_narada_email_forwarder",
+        "heartbeat_topic": "cdc_narada_email_forwarder.public.debezium_heartbeat_narada_email_forwarder"
+      },
+      {
+        "sink": "narada-facebook-iceberg-cdc-sink-v2",
+        "debezium": "cdc_narada_facebook",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "narada-mixpanel-iceberg-cdc-sink-v2",
+        "debezium": "cdc_archival_narada_mixpanel_01",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "narada-prod-iceberg-cdc-sink-v2",
+        "debezium": "cdc_narada_prod",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "narada-singular-iceberg-cdc-sink-v2",
+        "debezium": "cdc_narada_singular",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "payment-rails-iceberg-cdc-sink-v2",
+        "debezium": "cdc_payment_rails_v2",
+        "heartbeat_topic": "cdc_payment_rails.public.debezium_heartbeat_payment_rails"
+      },
+      {
+        "sink": "payment-rails-migration-iceberg-cdc-sink-v2",
+        "debezium": "cdc_payment_rails_migration_connector",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "payments-credit-iceberg-cdc-sink-v2",
+        "debezium": "cdc_credit_01",
+        "heartbeat_topic": "cdc_credit.credit.debezium_credit_lsp_heartbeat"
+      },
+      {
+        "sink": "payments-db-cms-iceberg-cdc-sink-v2",
+        "debezium": "cdc_payments_db_cms",
+        "heartbeat_topic": "cdc_payments_db_cms.public.debezium_heartbeat_payments_db"
+      },
+      {
+        "sink": "payments-payment-client-iceberg-cdc-sink-v2",
+        "debezium": "cdc_payments_db__payment_client",
+        "heartbeat_topic": null
+      },
+      {
+        "sink": "payments-public-iceberg-cdc-sink-v2",
+        "debezium": "cdc_payments_db",
+        "heartbeat_topic": "cdc_payments_db_cms.public.debezium_heartbeat_payments_db"
+      },
+      {
+        "sink": "plaid-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_plaid",
+        "heartbeat_topic": "cdc_brightmoney_plaid.public.debezium_uaa_plaid_heartbeat"
+      },
+      {
+        "sink": "referral-service-iceberg-cdc-sink-v2",
+        "debezium": "cdc_referral_service_v1",
+        "heartbeat_topic": "cdc_referral_service.public.debezium_heartbeat_referral_service"
+      },
+      {
+        "sink": "subscription-management-iceberg-cdc-sink-v2",
+        "debezium": "cdc_subscription_management",
+        "heartbeat_topic": "cdc_subscription_management.public.debezium_heartbeat_subscription_management"
+      },
+      {
+        "sink": "teller-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_teller",
+        "heartbeat_topic": "cdc_brightmoney_teller.public.debezium_heartbeat_brightmoney_teller"
+      },
+      {
+        "sink": "transaction-insights-iceberg-cdc-sink-v2",
+        "debezium": "cdc_uaa_ti_01",
+        "heartbeat_topic": "cdc_uaa_ti.public.debezium_uaa_ti_heartbeat"
+      },
+      {
+        "sink": "transunionapp-iceberg-cdc-sink-v2",
+        "debezium": "cdc_brightmoney_ucb_transunionapp",
+        "heartbeat_topic": "cdc_brightmoney_ucb_transunionapp.public.debezium_ucb_tu_heartbeat"
+      },
+      {
+        "sink": "uaa-brightapp-iceberg-cdc-sink-v2",
+        "debezium": "cdc_uaa_brightapp",
+        "heartbeat_topic": "cdc_uaa_brightapp.public.debezium_heartbeat_uaa_brightapp"
+      },
+      {
+        "sink": "unified-backoffice-iceberg-cdc-sink-v2",
+        "debezium": "cdc_unified_backoffice",
+        "heartbeat_topic": "cdc_unified_backoffice.public.debezium_heartbeat_unified_backoffice"
+      },
+      {
+        "sink": "unified-banking-interface-iceberg-cdc-sink-v2",
+        "debezium": "cdc_unified_banking_interface",
+        "heartbeat_topic": "cdc_unified_banking_interface.public.debezium_heartbeat_unified_banking_interface"
+      },
+      {
+        "sink": "webhook-db-iceberg-cdc-sink-v2",
+        "debezium": "cdc_webhook_db_v1",
+        "heartbeat_topic": "cdc_webhook_db.public.debezium_heartbeat_webhook_db"
+      }
+    ],
+    "kafka_sinks": [
+      "agent-quality-score-sink-v1",
+      "akoya-transactions-data-v0",
+      "besitos-affiliate-reporting-sink-v0",
+      "feature-store-kafka-account-data-v0",
+      "feature-store-kafka-user-data-v0",
+      "freshcaller-call-data-sink-v1",
+      "freshcaller-parallel-call-groups-sink-v3",
+      "freshcaller-participants-sink-v1",
+      "freshcaller-tags-sink-v1",
+      "freshchat-conversation-messages-sink-v1",
+      "freshchat-conversation-sink-v2",
+      "freshdesk-agent-sink-v1",
+      "freshdesk-chat-ticket-conversation-sink-v2",
+      "freshdesk-csat-table-sink-v1",
+      "freshdesk-merge-ticket-table-sink-v1",
+      "freshdesk-ratings-sink-v1",
+      "freshdesk-source-map-sink-v3",
+      "freshdesk-survey-answers-sink-v1",
+      "freshdesk-survey-questions-sink-v1",
+      "freshdesk-surveys-sink-v1",
+      "freshdesk-tickets-sink-v1",
+      "freshdesk-webhook-tickets-sink-v0",
+      "kafka-iceberg-connect-with-custom-logs-v2",
+      "monevo-affiliate-webhook-reporting-sink-v0",
+      "offers-platform-aggregators-sink-v0",
+      "plaid-transactions-data-v0",
+      "sagemaker-transactions-sink-v0",
+      "sagemakertest-transactions-sink-v0"
     ]
   },
   {
@@ -446,7 +796,6 @@
       "/dashboard/cs/card_chargeback/review/get/paginated/",
       "/dashboard/payments/rent_reporting/get_entries/",
       "/dashboard/cs/bsa/statement/download/"
-
     ]
   },
   {

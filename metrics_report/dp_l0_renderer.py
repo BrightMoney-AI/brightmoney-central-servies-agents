@@ -72,13 +72,15 @@ def _render_sink(s: SinkHealth) -> str:
     else:
         lines.append("  - Offset Lag: ⚪ no data")
 
-    # Throughput — informational only, not used for flagging
-    if s.debezium is None:
-        lines.append("  - Throughput: — no active connector")
+    # Throughput (heartbeat rate)
+    if s.heartbeat_topic is None:
+        lines.append("  - Throughput: — no heartbeat configured")
     elif s.heartbeat_rate is None:
-        lines.append("  - Throughput: ⚪ no data")
+        lines.append(f"  - Throughput: 🔴 no data  _(connector may be down)_")
+    elif s.heartbeat_rate < _HEARTBEAT_MIN:
+        lines.append(f"  - Throughput: 🔴 {s.heartbeat_rate:.1f} msg/5m  _(< {_HEARTBEAT_MIN} → stalled)_")
     else:
-        lines.append(f"  - Throughput: {s.heartbeat_rate:.1f} msg/5m")
+        lines.append(f"  - Throughput: 🟢 {s.heartbeat_rate:.1f} msg/5m")
 
     return "\n".join(lines)
 
@@ -116,6 +118,37 @@ def render_dp_l0_canvas(report: DPL0Report, title: str = "") -> str:
         for s in sorted_flagged:
             lines += [_render_sink(s), ""]
 
+    # ── Kafka Sinks section ────────────────────────────────────────────────────
+    if report.kafka_sinks:
+        lines += ["---", ""]
+        n_kflag = len(report.flagged_kafka_sinks)
+        n_kok   = len(report.kafka_sinks) - n_kflag
+        if n_kflag == 0:
+            lines += [f"## ✅ Kafka Sinks — all {len(report.kafka_sinks)} healthy", ""]
+        else:
+            lines += [f"## Kafka Sinks — {n_kflag} flagged  ·  {n_kok} healthy", ""]
+            sorted_kflag = sorted(
+                report.flagged_kafka_sinks,
+                key=lambda s: (0 if _sink_overall_icon(s) == "🔴" else 1, s.sink),
+            )
+            for s in sorted_kflag:
+                lines += [_render_sink(s), ""]
+
+    # ── Throughput summary — CDC sinks only (Kafka sinks have no heartbeat) ────
+    lines += ["---", "", "## Heartbeat Throughput — CDC sinks (msg/5m)", ""]
+    for s in sorted(report.sinks, key=lambda x: x.sink):
+        name = _short(s.sink)
+        if s.heartbeat_topic is None:
+            icon, val = "⚪", "—"
+        elif s.heartbeat_rate is None:
+            icon, val = "🔴", "no data"
+        elif s.heartbeat_rate < _HEARTBEAT_MIN:
+            icon, val = "🔴", f"{s.heartbeat_rate:.1f}"
+        else:
+            icon, val = "🟢", f"{s.heartbeat_rate:.1f}"
+        lines.append(f"- {icon} `{name}`: {val}")
+    lines.append("")
+
     # ── VM Disk section ────────────────────────────────────────────────────────
     lines.append("---")
     lines.append("")
@@ -144,7 +177,8 @@ def render_dp_l0_canvas(report: DPL0Report, title: str = "") -> str:
     lines.append(
         f"_Thresholds: coord lag crit >{_COORD_LAG_CRIT:,} · "
         f"lag delta crit >{_LAG_DELTA_CRIT:,} over 24 h · "
-        f"disk crit >{_DISK_CRIT_PCT:.0f}%  ·  throughput shown as info only_"
+        f"throughput crit <{_HEARTBEAT_MIN} msg/5m · "
+        f"disk crit >{_DISK_CRIT_PCT:.0f}% (VM-level)_"
     )
 
     return "\n".join(lines)

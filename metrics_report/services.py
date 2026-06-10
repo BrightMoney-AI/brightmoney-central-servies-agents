@@ -67,7 +67,8 @@ class ServiceDef:
     api_response_metric: str = "django_http_responses_total_by_status"  # override for services using a different response metric
     report_group: str = "Central Services"                         # which canvas this service appears in
     rabbitmq_queues: list[str] = field(default_factory=list)       # RabbitMQ queue names to monitor
-    kafka_cdc_sinks: list[dict] = field(default_factory=list)      # CDC sink reference: [{sink, debezium}] — static, not queried by collector
+    kafka_cdc_sinks: list[dict] = field(default_factory=list)      # CDC sink reference: [{sink, debezium, heartbeat_topic}]
+    kafka_sinks:     list[str]  = field(default_factory=list)      # plain Kafka sink connector names (no CDC heartbeat)
 
     def _name_selector(self, patterns: Optional[list[str]] = None) -> Optional[str]:
         p = patterns if patterns is not None else self.name_patterns
