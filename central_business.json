@@ -20,7 +20,7 @@
     "metric_type": "failure_count",
     "query": "sum(MIXPANEL_SINGLE_EVENT_FAILED[24h])",
     "warn_above": 10000,
-    "crit_above": 10000
+    "crit_above": 20000
   },
   {
     "display_name": "Mixpanel Batch Event Success Rate",
@@ -644,14 +644,16 @@
     "metric_type": "failure_count",
     "query": "sum(EMAIL_FORWARDER_EVENT_CONSUMED{tag_name1=\"failure\"}[24h])",
     "warn_above": 500,
-    "crit_above": 500
+    "crit_above": 1000
   },
   {
     "display_name": "Total Events Consumed",
     "query_name": "total_events_consumed_18",
     "section": "Email Forwarder",
     "metric_type": "total_count",
-    "query": "sum(EMAIL_FORWARDER_EVENT_CONSUMED{tag_name1=\"total\"}[24h])"
+    "query": "sum(EMAIL_FORWARDER_EVENT_CONSUMED{tag_name1=\"total\"}[24h])",
+    "warn_above": 1000,
+    "crit_above": 5000
   },
   {
     "display_name": "Total Events Not Processed",
