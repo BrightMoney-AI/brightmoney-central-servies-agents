@@ -15,13 +15,19 @@ _QUERY_PATH       = "/api/v1/query"
 _QUERY_RANGE_PATH = "/api/v1/query_range"
 
 
+
 class VMClient:
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, headers: Optional[dict[str, str]] = None) -> None:
         self._base_url = base_url.rstrip("/")
+        self._headers  = headers or {}
         self._client: Optional[httpx.AsyncClient] = None
 
     async def __aenter__(self) -> "VMClient":
-        self._client = httpx.AsyncClient(base_url=self._base_url, timeout=10.0)
+        self._client = httpx.AsyncClient(
+            base_url=self._base_url,
+            headers=self._headers,
+            timeout=10.0,
+        )
         return self
 
     async def __aexit__(self, *_) -> None:

@@ -451,7 +451,7 @@ async def _fetch_alsm_latency() -> list[BusinessMetric]:
     aggregators = ["PLAID", "DL_CAPITALONE"]
     # Per aggregator: [p50, p99_today, p99_yesterday]
     try:
-        async with VMClient(settings.vm_base_url) as vm:
+        async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
             queries = []
             for agg in aggregators:
                 q99 = _alsm_latency_promql(agg, "0.99")
@@ -516,7 +516,7 @@ def _saism_latency_promql(aggregator: str, quantile: str = "0.99") -> str:
 async def _fetch_saism_latency() -> list[BusinessMetric]:
     aggregators = ["CRBAA", "BRIGHT"]
     try:
-        async with VMClient(settings.vm_base_url) as vm:
+        async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
             queries = []
             for agg in aggregators:
                 q99 = _saism_latency_promql(agg, "0.99")

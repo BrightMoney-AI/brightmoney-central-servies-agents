@@ -4,7 +4,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    vm_base_url: str = "http://vmselect-observability.brightmoney.net:8481/select/0/prometheus"
+    # VictoriaMetrics connection
+    vm_instance_entrypoint: str = "http://vmselect-observability.brightmoney.net:8481"
+    vm_instance_type: str = "cluster"   # "cluster" → /select/0/prometheus; "single" → bare entrypoint
+    vm_auth_header: str = ""            # e.g. "Basic bWNwOlh6UjdYMGU..."
+
     gateway_timeout_secs: float = 5.0
     query_window: str = "24h"
 
@@ -41,6 +45,19 @@ class Settings(BaseSettings):
     kafka_connect_kafka_sink_url: str = ""
     kafka_connect_cdc_sink_url: str = ""
     kafka_connect_debezium_url: str = ""
+
+    @property
+    def vm_base_url(self) -> str:
+        base = self.vm_instance_entrypoint.rstrip("/")
+        if self.vm_instance_type == "cluster":
+            return f"{base}/select/0/prometheus"
+        return base
+
+    @property
+    def vm_headers(self) -> dict:
+        if self.vm_auth_header:
+            return {"Authorization": self.vm_auth_header}
+        return {}
 
     @property
     def kafka_connect_instances(self) -> dict:

@@ -54,7 +54,7 @@ async def run_report(group: str | None = None) -> None:
     emr_report             = None
     dp_l0_report           = None
 
-    async with VMClient(settings.vm_base_url) as vm:
+    async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
         for service in services:
             # Skip reference-only entries (no VM/API selectors) — they have no metrics to collect
             if not service.system_selector and not service.api_selector:
