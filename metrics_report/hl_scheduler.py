@@ -37,10 +37,34 @@ _GROUP_ORDER = ["UAA Services", "Central Services", "Data Platform"]
 
 # ── Slack publish (HL channel) ─────────────────────────────────────────────────
 
+_MAX_CANVAS_CHARS = 80_000  # Slack gateway times out above ~100 KB; stay safe
+
+
+def _trim_canvas(markdown: str) -> str:
+    """Drop L2 section if content exceeds the Slack canvas size limit."""
+    if len(markdown) <= _MAX_CANVAS_CHARS:
+        return markdown
+    # Find the L2 heading and cut there
+    for marker in ("\n---\n## L2", "\n## L2"):
+        idx = markdown.find(marker)
+        if idx != -1:
+            trimmed = markdown[:idx] + "\n\n> *L2 deep-analysis section omitted — canvas size limit reached.*\n"
+            log.warning("Canvas trimmed at L2 boundary: %d → %d chars", len(markdown), len(trimmed))
+            return trimmed
+    # No L2 marker — hard truncate at word boundary
+    truncated = markdown[:_MAX_CANVAS_CHARS].rsplit("\n", 1)[0]
+    truncated += "\n\n> *Canvas truncated — content exceeded size limit.*\n"
+    log.warning("Canvas hard-truncated: %d → %d chars", len(markdown), len(truncated))
+    return truncated
+
+
 async def _publish_hl_canvas(markdown: str, summary_blocks: list[dict], title: str) -> None:
     """Create a canvas and post summary + canvas-card to SLACK_HL_CHANNEL_ID."""
     client  = AsyncWebClient(token=settings.slack_bot_token)
     channel = settings.slack_hl_channel_id
+
+    markdown = _trim_canvas(markdown)
+    log.info("Canvas size: %d chars for %r", len(markdown), title)
 
     try:
         resp = await client.api_call(
