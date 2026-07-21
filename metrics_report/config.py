@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     slack_bot_token: str
     slack_channel_id: str
+    slack_hl_channel_id: str = ""   # new high-level ops channel; empty = disabled
 
     # Thresholds for status icons
     cpu_warn_pct: float = 70.0

@@ -226,13 +226,13 @@ async def collect_dp_l0(
 
 def _extract_coord_sink(group_id: str) -> str:
     """cg-control-{sink}-coord  →  {sink}"""
-    s = group_id.removeprefix("cg-control-")
+    s = group_id[len("cg-control-"):] if group_id.startswith("cg-control-") else group_id
     return s[:-6] if s.endswith("-coord") else s
 
 
 def _extract_offset_sink(group_id: str) -> str:
     """cg-control-{sink}  →  {sink}"""
-    return group_id.removeprefix("cg-control-")
+    return group_id[len("cg-control-"):] if group_id.startswith("cg-control-") else group_id
 
 
 def _index_coord(raw: list[tuple[str, float]], known: set[str]) -> dict[str, float]:
