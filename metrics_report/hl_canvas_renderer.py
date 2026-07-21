@@ -953,6 +953,75 @@ def _render_l2(
     return "\n".join(lines)
 
 
+# ── UKS Services rendering ────────────────────────────────────────────────────
+
+def _render_l0_uks(uks: Any, flags: list[tuple[int, str]]) -> list[str]:
+    if uks is None:
+        return []
+    lines: list[str] = ["### UKS KYC — Overview", ""]
+    lines += ["| Metric | Value | Status |", "|---|---|---|"]
+
+    # KYC pass rate
+    if uks.kyc_pass_rate is not None:
+        icon = "🔴" if uks.kyc_pass_rate < 90 else ("🟡" if uks.kyc_pass_rate < 95 else "🟢")
+        rpm  = f"  ·  {uks.kyc_per_min:.1f}/min" if uks.kyc_per_min else ""
+        lines.append(f"| KYC Pass Rate | {uks.kyc_pass_rate:.1f}%{rpm} | {icon} |")
+        if icon in ("🟡", "🔴"):
+            flags.append((0 if icon == "🔴" else 1, f"{icon} UKS · L0 · KYC Pass Rate · {uks.kyc_pass_rate:.1f}%"))
+        if uks.kyc_fail_rate is not None:
+            lines.append(f"| KYC Fail Rate | {uks.kyc_fail_rate:.1f}% | {'🔴' if uks.kyc_fail_rate > 10 else '🟡' if uks.kyc_fail_rate > 5 else '🟢'} |")
+    else:
+        lines.append("| KYC Pass Rate | — | ⚪ |")
+
+    # Task summary — count flagged
+    flagged_tasks = [t for t in uks.tasks if t.success_rate is not None and t.success_rate < 95.0]
+    total_tasks   = len(uks.tasks)
+    if total_tasks:
+        task_icon = "🔴" if flagged_tasks else "🟢"
+        task_val  = f"{total_tasks - len(flagged_tasks)}/{total_tasks} healthy"
+        lines.append(f"| Celery Tasks | {task_val} | {task_icon} |")
+        for t in flagged_tasks:
+            icon = "🔴" if t.success_rate is not None and t.success_rate < 90 else "🟡"
+            flags.append((0 if icon == "🔴" else 1, f"{icon} UKS · L0 · Task {t.name} · {t.success_rate:.1f}% success"))
+
+    lines.append("")
+    return lines
+
+
+def _render_l1_uks(uks: Any, flags: list[tuple[int, str]]) -> list[str]:
+    if uks is None:
+        return []
+    lines: list[str] = []
+
+    # Per-task table
+    if uks.tasks:
+        lines += ["### UKS Celery Tasks", ""]
+        lines += ["| Task | Success Rate | P99 Latency |", "|---|---|---|"]
+        for t in sorted(uks.tasks, key=lambda x: x.name):
+            suc  = f"{t.success_rate:.1f}%" if t.success_rate is not None else "—"
+            p99  = f"{t.p99_ms:.0f} ms"    if t.p99_ms is not None else "—"
+            icon = ("🔴" if t.success_rate is not None and t.success_rate < 90
+                    else "🟡" if t.success_rate is not None and t.success_rate < 95
+                    else "🟢")
+            lines.append(f"| `{t.name}` | {icon} {suc} | {p99} |")
+        lines.append("")
+
+    # Per-view API table
+    if uks.api_views:
+        lines += ["### UKS Incoming API — By View", ""]
+        lines += ["| View | Success Rate | Req/min |", "|---|---|---|"]
+        for v in sorted(uks.api_views, key=lambda x: -(x.req_per_min or 0)):
+            suc = f"{v.success_rate:.1f}%" if v.success_rate is not None else "—"
+            rpm = f"{v.req_per_min:.1f}"   if v.req_per_min is not None else "—"
+            icon = ("🔴" if v.success_rate is not None and v.success_rate < 90
+                    else "🟡" if v.success_rate is not None and v.success_rate < 95
+                    else "🟢")
+            lines.append(f"| `{v.view}` | {icon} {suc} | {rpm} |")
+        lines.append("")
+
+    return lines
+
+
 # ── Public entry point ─────────────────────────────────────────────────────────
 
 def render_hl_canvas(
@@ -966,6 +1035,7 @@ def render_hl_canvas(
     emr_report: Optional[Any] = None,
     connector_health: Optional[KafkaConnectHealth] = None,
     airflow_health: Optional[AirflowHealth] = None,
+    uks_metrics: Optional[Any] = None,
 ) -> str:
     flags: list[tuple[int, str]] = []
 
@@ -974,10 +1044,18 @@ def render_hl_canvas(
         uaa_biz_metrics, central_biz_metrics, dp_biz_metrics,
         dp_l0_report, emr_report, airflow_health, flags,
     )
+    if group_name == "UKS Services":
+        l0 += "\n" + "\n".join(_render_l0_uks(uks_metrics, flags))
+
     l1 = _render_l1(
         group_name, reports,
         uaa_biz_metrics, dp_l0_report, connector_health, airflow_health, dp_biz_metrics, flags,
     )
+    if group_name == "UKS Services":
+        uks_l1 = _render_l1_uks(uks_metrics, flags)
+        if uks_l1:
+            l1 = (l1 + "\n" + "\n".join(uks_l1)) if l1 else "\n".join(uks_l1)
+
     l2 = _render_l2(group_name, uaa_biz_metrics, central_biz_metrics, dp_biz_metrics, emr_report)
 
     attn   = _render_attention(flags)

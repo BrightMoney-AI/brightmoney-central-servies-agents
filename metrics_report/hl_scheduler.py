@@ -32,7 +32,7 @@ from .vm_client import VMClient
 IST = timezone(timedelta(hours=5, minutes=30))
 log = logging.getLogger(__name__)
 
-_GROUP_ORDER = ["UAA Services", "Central Services", "Data Platform"]
+_GROUP_ORDER = ["UAA Services", "UKS Services", "Central Services", "Data Platform"]
 
 
 # ── Slack publish (HL channel) ─────────────────────────────────────────────────
@@ -173,6 +173,7 @@ async def run_hl_report() -> None:
     dp_biz_metrics:      list = []
     emr_report                = None
     dp_l0_report              = None
+    uks_metrics               = None
 
     async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
         for service in services:
@@ -191,6 +192,9 @@ async def run_hl_report() -> None:
                 dp_l0_svc.kafka_cdc_sinks,
                 dp_l0_svc.kafka_sinks or None,
             )
+
+        from .uks_collector import collect_uks_metrics
+        uks_metrics = await collect_uks_metrics(vm)
 
         from .central_business_collector import collect_business_metrics
         central_biz_metrics = await collect_business_metrics(vm)
@@ -231,18 +235,20 @@ async def run_hl_report() -> None:
         is_dp  = group_name == "Data Platform"
         is_uaa = group_name == "UAA Services"
         is_cen = group_name == "Central Services"
+        is_uks = group_name == "UKS Services"
 
         markdown = render_hl_canvas(
             group_name=group_name,
             reports=collected,
             title=canvas_title,
-            uaa_biz_metrics=uaa_biz_metrics     if is_uaa else None,
+            uaa_biz_metrics=uaa_biz_metrics         if is_uaa else None,
             central_biz_metrics=central_biz_metrics if is_cen else None,
-            dp_biz_metrics=dp_biz_metrics       if is_dp  else None,
-            dp_l0_report=dp_l0_report           if is_dp  else None,
-            emr_report=emr_report               if is_dp  else None,
-            connector_health=connector_health   if is_dp  else None,
-            airflow_health=airflow_health        if is_dp  else None,
+            dp_biz_metrics=dp_biz_metrics           if is_dp  else None,
+            dp_l0_report=dp_l0_report               if is_dp  else None,
+            emr_report=emr_report                   if is_dp  else None,
+            connector_health=connector_health       if is_dp  else None,
+            airflow_health=airflow_health           if is_dp  else None,
+            uks_metrics=uks_metrics                 if is_uks else None,
         )
 
         summary_blocks = _hl_summary_blocks(collected, group_name)

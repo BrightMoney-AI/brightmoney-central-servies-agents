@@ -31,7 +31,7 @@ IST = timezone(timedelta(hours=5, minutes=30))
 log = logging.getLogger(__name__)
 
 # Canonical display order for canvas groups
-_GROUP_ORDER = ["UAA Services", "Central Services", "Data Platform"]
+_GROUP_ORDER = ["UAA Services", "UKS Services", "Central Services", "Data Platform"]
 
 
 async def run_report(group: str | None = None) -> None:
@@ -47,12 +47,14 @@ async def run_report(group: str | None = None) -> None:
     collect_central_biz = group is None or group == "Central Services"
     collect_uaa_biz     = group is None or group == "UAA Services"
     collect_dp_biz      = group is None or group == "Data Platform"
+    collect_uks         = group is None or group == "UKS Services"
 
     biz_metrics:     list = []
     uaa_biz_metrics: list = []
     dp_biz_metrics:  list = []
     emr_report             = None
     dp_l0_report           = None
+    uks_metrics            = None
 
     async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
         for service in services:
@@ -88,6 +90,10 @@ async def run_report(group: str | None = None) -> None:
         if collect_central_biz:
             from .central_business_collector import collect_business_metrics
             biz_metrics = await collect_business_metrics(vm)
+
+        if collect_uks:
+            from .uks_collector import collect_uks_metrics
+            uks_metrics = await collect_uks_metrics(vm)
 
     # Trino-based business metrics (run outside VM context — separate connection)
     if collect_uaa_biz:
@@ -169,6 +175,14 @@ async def run_report(group: str | None = None) -> None:
         emr_md     = render_emr_canvas(emr_report, title=emr_title)
         emr_blocks = _emr_summary_blocks(emr_report, date_str)
         await publish_canvas(emr_md, emr_blocks, title=emr_title)
+
+    if uks_metrics is not None:
+        from .uks_renderer import render_uks_canvas
+        uks_title  = f"UKS Services — KYC Metrics — {date_str}"
+        uks_md     = render_uks_canvas(uks_metrics, title=uks_title)
+        uks_blocks = _uks_summary_blocks(uks_metrics, date_str)
+        await publish_canvas(uks_md, uks_blocks, title=uks_title)
+        log.info("UKS KYC metrics canvas posted.")
         log.info("EMR metrics canvas posted (%d flags).", emr_report.total_flags)
 
     if dp_l0_report is not None:
@@ -453,6 +467,43 @@ def _emr_summary_blocks(report: object, date_str: str) -> list[dict]:
 
     blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": "Full breakdown → canvas below ↓"}]})
     return blocks
+
+
+def _uks_summary_blocks(metrics: object, date_str: str) -> list[dict]:
+    from .uks_collector import UKSMetrics
+    m: UKSMetrics = metrics  # type: ignore[assignment]
+
+    if m.kyc_pass_rate is None:
+        overall_emoji, overall_label = "⚪", "NO DATA"
+    elif m.kyc_flagged:
+        overall_emoji, overall_label = "🔴" if m.kyc_pass_rate < 90 else "🟡", "KYC DEGRADED"
+    elif m.any_task_flagged:
+        overall_emoji, overall_label = "🟡", "TASKS DEGRADED"
+    else:
+        overall_emoji, overall_label = "🟢", "ALL HEALTHY"
+
+    ts_str = datetime.now(IST).strftime("%a %d %b %Y · %I:%M %p IST")
+    kyc_str = f"{m.kyc_pass_rate:.1f}% pass rate" if m.kyc_pass_rate is not None else "no data"
+
+    return [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "📊  UKS Services — KYC Metrics", "emoji": True},
+        },
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": ts_str}]},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*Overall:* {overall_emoji} *{overall_label}*   ·   "
+                    f"KYC: {kyc_str}   ·   "
+                    f"{len(m.tasks)} task(s)   ·   {len(m.api_views)} API view(s)"
+                ),
+            },
+        },
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": "Full breakdown → canvas below ↓"}]},
+    ]
 
 
 def _dp_l0_summary_blocks(report: object, date_str: str) -> list[dict]:
