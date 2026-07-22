@@ -41,7 +41,6 @@ async def run_report(group: str | None = None) -> None:
         log.info("Filtered to group=%r: %d service(s).", group, len(services))
     log.info("Starting L0 metrics report for %d service(s)...", len(services))
 
-    gateway = MetricsGateway(timeout_secs=settings.gateway_timeout_secs)
     groups: dict[str, list[tuple[str, object]]] = defaultdict(list)
 
     collect_central_biz = group is None or group == "Central Services"
@@ -55,58 +54,81 @@ async def run_report(group: str | None = None) -> None:
     emr_report             = None
     dp_l0_report           = None
     uks_metrics            = None
+    uaa_vm_metrics: list   = []
+
+    from .dp_l0_collector import collect_dp_l0
+    from .central_business_collector import collect_business_metrics
+    from .uks_collector import collect_uks_metrics
+    from .uaa_business_collector import collect_uaa_vm_metrics, collect_uaa_business_metrics
+    from .dp_business_collector import collect_dp_business_metrics
+    from .emr_collector import collect_emr_metrics
+
+    dp_l0_svc = next((s for s in services if s.display_name == "Data Platform L0"), None)
+    svc_list  = [s for s in services if s.system_selector or s.api_selector]
 
     async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
-        for service in services:
-            # Skip reference-only entries (no VM/API selectors) — they have no metrics to collect
-            if not service.system_selector and not service.api_selector:
-                log.info("Skipping %s — reference-only entry (no VM/API selector).", service.display_name)
-                continue
-            log.info("Collecting: %s [group=%s]", service.display_name, service.report_group)
-            raw = await collect(vm, gateway, service)
-            l0  = to_l0_report(raw, service_name=service.display_name, show_api_metrics=bool(service.api_job))
-            groups[service.report_group].append((service.display_name, l0))
 
+        # ── All services in parallel (each gets its own gateway) ──────────────
+        async def _collect_svc(svc):
+            log.info("Collecting: %s [group=%s]", svc.display_name, svc.report_group)
+            gw  = MetricsGateway(timeout_secs=settings.gateway_timeout_secs)
+            raw = await collect(vm, gw, svc)
             if raw.failures:
                 log.warning(
                     "[%s] %d failed queries: %s",
-                    service.display_name,
+                    svc.display_name,
                     len(raw.failures),
                     [f.name for f in raw.failures],
                 )
             else:
-                log.info("[%s] All queries succeeded.", service.display_name)
+                log.info("[%s] All queries succeeded.", svc.display_name)
+            return svc, raw
 
-        if collect_dp_biz:
-            from .dp_l0_collector import collect_dp_l0
-            dp_l0_svc = next((s for s in services if s.display_name == "Data Platform L0"), None)
-            if dp_l0_svc and (dp_l0_svc.kafka_cdc_sinks or dp_l0_svc.kafka_sinks):
-                dp_l0_report = await collect_dp_l0(
-                    vm,
-                    dp_l0_svc.kafka_cdc_sinks,
-                    dp_l0_svc.kafka_sinks or None,
-                )
+        svc_results = await asyncio.gather(*[_collect_svc(s) for s in svc_list])
+        for svc, raw in svc_results:
+            l0 = to_l0_report(raw, service_name=svc.display_name, show_api_metrics=bool(svc.api_job))
+            groups[svc.report_group].append((svc.display_name, l0))
 
-        if collect_central_biz:
-            from .central_business_collector import collect_business_metrics
-            biz_metrics = await collect_business_metrics(vm)
+        # ── Specialist VM collectors in parallel ──────────────────────────────
+        async def _dp_l0():
+            if collect_dp_biz and dp_l0_svc and (dp_l0_svc.kafka_cdc_sinks or dp_l0_svc.kafka_sinks):
+                return await collect_dp_l0(vm, dp_l0_svc.kafka_cdc_sinks, dp_l0_svc.kafka_sinks or None)
+            return None
 
-        if collect_uks:
-            from .uks_collector import collect_uks_metrics
-            uks_metrics = await collect_uks_metrics(vm)
+        async def _central_biz():
+            return await collect_business_metrics(vm) if collect_central_biz else []
 
-    # Trino-based business metrics (run outside VM context — separate connection)
-    if collect_uaa_biz:
-        from .uaa_business_collector import collect_uaa_business_metrics
-        uaa_biz_metrics = await collect_uaa_business_metrics()
+        async def _uks():
+            return await collect_uks_metrics(vm) if collect_uks else None
 
-    if collect_dp_biz:
-        from .dp_business_collector import collect_dp_business_metrics
-        dp_biz_metrics = await collect_dp_business_metrics()
+        async def _uaa_vm():
+            # ALSM/SAISM latency — inside shared VM context to reuse TCP pool
+            return await collect_uaa_vm_metrics(vm) if collect_uaa_biz else []
 
-    if collect_dp_biz:
-        from .emr_collector import collect_emr_metrics
-        emr_report = await collect_emr_metrics()
+        (
+            dp_l0_report,
+            biz_metrics,
+            uks_metrics,
+            uaa_vm_metrics,
+        ) = await asyncio.gather(_dp_l0(), _central_biz(), _uks(), _uaa_vm())
+
+    # ── All non-VM collectors in one gather ───────────────────────────────────
+    async def _uaa_trino():
+        return await collect_uaa_business_metrics() if collect_uaa_biz else []
+
+    async def _dp_biz():
+        return await collect_dp_business_metrics() if collect_dp_biz else []
+
+    async def _emr():
+        return await collect_emr_metrics() if collect_dp_biz else None
+
+    (
+        uaa_biz_trino,
+        dp_biz_metrics,
+        emr_report,
+    ) = await asyncio.gather(_uaa_trino(), _dp_biz(), _emr())
+    # Merge VM metrics (ALSM/SAISM) with Trino metrics
+    uaa_biz_metrics = uaa_vm_metrics + uaa_biz_trino
 
     if not groups and not biz_metrics and not uaa_biz_metrics and not dp_biz_metrics:
         log.warning("No services collected — skipping Canvas post.")
