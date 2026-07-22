@@ -530,7 +530,7 @@ async def run_hl_report() -> None:
         await _publish_hl_canvas(markdown, summary_blocks, title=canvas_title)
         log.info("HL canvas posted: %r (%d service(s)).", canvas_title, len(collected))
 
-    # ── L0 L0 Snapshots — one focused canvas per group ───────────────────
+    # ── L0 Snapshots — one focused canvas per group ──────────────────────
     # Posts to SLACK_L0_CHANNEL_ID.  Each group (UAA / DP / Central / UKS) gets
     # its own canvas with L0 metrics + a plain-English health verdict.
     # Reuses already-collected data — zero extra VM queries.

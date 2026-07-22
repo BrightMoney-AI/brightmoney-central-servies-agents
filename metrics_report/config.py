@@ -9,7 +9,14 @@ class Settings(BaseSettings):
     vm_instance_type: str = "cluster"   # "cluster" → /select/0/prometheus; "single" → bare entrypoint
     vm_auth_header: str = ""            # e.g. "Basic bWNwOlh6UjdYMGU..."
 
-    gateway_timeout_secs: float = 5.0
+    # Per-query hard deadline.  Must be long enough to cover:
+    #   (a) semaphore queue wait = (N_queries / vm_max_concurrent) × avg_query_ms
+    #   (b) actual HTTP round-trip (httpx read timeout = 30 s)
+    # With ~200 parallel queries and vm_max_concurrent=20 the worst-case queue
+    # wait is ~10 batches × ~200 ms ≈ 2 s, so 30 s is comfortably safe.
+    # The old 5.0 s value was calibrated for serial execution and fires
+    # prematurely when queries are queued on the semaphore.
+    gateway_timeout_secs: float = 30.0
     query_window: str = "24h"
 
     # VictoriaMetrics rate / concurrency controls.
@@ -18,8 +25,8 @@ class Settings(BaseSettings):
     # vm_max_concurrent: max in-flight concurrent requests (semaphore).
     #                    Independent of rate — prevents connection exhaustion on
     #                    slow/range queries.
-    vm_max_rps:        float = 10.0
-    vm_max_concurrent: int   = 10
+    vm_max_rps:        float = 20.0
+    vm_max_concurrent: int   = 20
 
     slack_bot_token: str
     slack_channel_id: str

@@ -62,6 +62,11 @@ def _fmt_success(report: L0Report) -> str:
     val = report.api.success_rate_pct
     if val is None:
         return "—"
+    # No traffic: success=0 and error=0 means the service received no requests —
+    # show "—" instead of a misleading 🔴 0.0%.
+    err = report.api.error_rate_pct
+    if val == 0.0 and (err is None or err == 0.0):
+        return "—"
     base = report.api.success_rate_baseline_pct
     icon = "🔴" if val < 95 else ("🟡" if val < 99 else "🟢")
     if base is not None and base > 0:
@@ -78,6 +83,10 @@ def _fmt_error(report: L0Report) -> str:
     val = report.api.error_rate_pct
     if val is None:
         return "—"
+    # No traffic: both error and success are 0 — show "—" instead of 🟢 0.00%.
+    success = report.api.success_rate_pct
+    if val == 0.0 and (success is None or success == 0.0):
+        return "—"
     icon = "🔴" if val >= 5 else ("🟡" if val >= 1 else "🟢")
     base = report.api.error_rate_baseline_pct
     if base is not None and base >= 0.5:
@@ -92,6 +101,9 @@ def _fmt_latency(report: L0Report) -> str:
         return "—"
     val = report.api.avg_latency_p50_ms
     if val is None:
+        return "—"
+    # 0 ms is never a real latency value — it means no requests were served.
+    if val == 0.0:
         return "—"
     icon = "🔴" if val >= 1000 else ("🟡" if val >= 500 else "🟢")
     base = report.api.avg_latency_baseline_ms
@@ -744,7 +756,7 @@ def render_l0_group_summary_blocks(
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": f"📊  {group_name} — Manager Snapshot — {date_str}",
+                "text": f"📊  {group_name} — L0 Snapshot — {date_str}",
                 "emoji": True,
             },
         },
