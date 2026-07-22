@@ -86,7 +86,7 @@ async def _now(group: str | None) -> None:
     if (settings.slack_hl_channel_id or settings.slack_l0_channel_id) and group is None:
         await run_hl_report()
 
-    # Legacy detailed per-service report runs last.
+    # Legacy detailed per-service report runs last
     await run_report(group=group)
 
 
