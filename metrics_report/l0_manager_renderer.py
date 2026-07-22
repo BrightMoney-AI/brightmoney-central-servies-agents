@@ -1,16 +1,27 @@
 """
-l0_manager_renderer.py — Renders a single all-groups L0 snapshot canvas for
-the manager / senior-engineering review channel.
+l0_manager_renderer.py — Manager-level L0 canvas rendering.
 
-Design goals:
-  · One canvas covers all groups — no separate docs per group.
-  · Flagged services surfaced at the very top so managers see them first.
-  · Per-group tables show exactly what L0 exposes: status, servers, success
-    rate, error rate, and latency P50 (with 7d baseline trend where available).
-  · No L1/L2 deep-dive — a footnote points readers to the detailed channel.
+Two rendering modes:
 
-Consumed by hl_scheduler.run_hl_report() after the group-level canvases are
-posted, using the already-collected `groups` dict (zero extra VM queries).
+1. Per-group canvases  (primary, used by hl_scheduler)
+   render_l0_group_canvas() + render_l0_group_summary_blocks()
+   One focused canvas per group (UAA / DP / Central / UKS), each containing:
+     · A plain-English health verdict ("All 8 services running and healthy — …")
+     · Flagged items for that group (critical first, then warnings)
+     · Compact service-health table  (status · servers · success · error · P50)
+     · Group-specific L0 metrics:
+         UAA      → Business Trends (onboarding, Plaid batch, ALSM/SAISM) + Kafka TI
+         DP       → Data Quality Trends (CDC lag, stale tables, Airflow, EMR)
+         Central  → Business Metrics Scorecard
+         UKS      → KYC pass rate + Celery task health
+   All posted to SLACK_L0_CHANNEL_ID — separate canvas messages per group.
+
+2. All-groups combined canvas  (legacy / backup)
+   render_l0_manager_canvas() — kept for backward compatibility.
+
+Consumed by hl_scheduler.run_hl_report() and run_l0_manager_only() after the
+per-group HL canvases are posted; reuses already-collected data (zero extra VM
+queries).
 """
 from __future__ import annotations
 
@@ -327,6 +338,402 @@ def _render_group(group_name: str, services: list[tuple[str, L0Report]]) -> list
 
     lines.append("")
     return lines
+
+
+# ── Per-group canvas: health verdict ──────────────────────────────────────────
+
+_GROUP_INSIGHTS: dict[str, dict[str, str]] = {
+    # {group: {status: insight_suffix}}  — appended after the status headline.
+    "UAA Services": {
+        "healthy": "Onboarding, Plaid batch and enrichment flows are nominal.",
+        "warning": "Review flagged items — onboarding or Plaid batch may need attention.",
+        "critical": "Service disruption detected — check flagged items immediately.",
+    },
+    "Data Platform": {
+        "healthy": "CDC sinks within normal range. Airflow DAGs running clean. No EMR breaches.",
+        "warning": "Some data-quality signals degraded — review CDC lag, Airflow or EMR below.",
+        "critical": "Data pipeline disruption detected — check flagged items immediately.",
+    },
+    "Central Services": {
+        "healthy": "Business metric checks passing across all sections.",
+        "warning": "One or more business metric sections flagged — review below.",
+        "critical": "Critical business metric breach detected — check flagged items immediately.",
+    },
+    "UKS Services": {
+        "healthy": "KYC pipeline healthy. Celery tasks and API views running nominally.",
+        "warning": "KYC pass rate or task success degraded — review below.",
+        "critical": "KYC pipeline disruption detected — check flagged items immediately.",
+    },
+}
+
+_DEFAULT_INSIGHTS = {
+    "healthy": "All checks passing.",
+    "warning": "One or more signals degraded — review flagged items below.",
+    "critical": "Critical issue detected — review flagged items immediately.",
+}
+
+
+def _group_health_verdict(
+    group_name: str,
+    services: list[tuple[str, L0Report]],
+    has_extra_flags: bool = False,
+) -> str:
+    """Return a plain-English, manager-readable health verdict for a group.
+
+    Combines service-level status with any extra flags (e.g. Kafka, CDC lag)
+    to produce one concise sentence that gives immediate situational awareness.
+    """
+    n_total = len(services)
+    n_crit  = sum(1 for _, r in services if r.status == Status.CRITICAL)
+    n_warn  = sum(1 for _, r in services if r.status == Status.WARNING)
+    n_ok    = sum(1 for _, r in services if r.status == Status.HEALTHY)
+
+    insights = _GROUP_INSIGHTS.get(group_name, _DEFAULT_INSIGHTS)
+
+    if n_crit:
+        icon   = "🔴"
+        head   = f"**{n_crit} of {n_total} service(s) critical — immediate attention required.**"
+        suffix = insights["critical"]
+    elif n_warn or has_extra_flags:
+        icon   = "🟡"
+        if n_warn:
+            head = f"**{n_warn} of {n_total} service(s) degraded.**"
+        else:
+            head = f"**All {n_total} service(s) healthy — pipeline flags detected.**"
+        suffix = insights["warning"]
+    else:
+        icon   = "🟢"
+        head   = f"**All {n_total} service(s) running and healthy.**"
+        suffix = insights["healthy"]
+
+    return f"> {icon} {head} {suffix}"
+
+
+def _render_group_flagged_section(
+    services: list[tuple[str, L0Report]],
+    extra_flags: list[tuple[str, str]],   # [(severity, description), ...]
+) -> list[str]:
+    """Render the Flags section for a single group.
+
+    `extra_flags` carries pipeline-level flags (Kafka, CDC lag etc.) in the
+    same (severity-str, desc) format produced by _flag_items().
+    Returns [] when everything is healthy — keeps the canvas noise-free.
+    """
+    # Service-level flags
+    crit_lines: list[str] = []
+    warn_lines: list[str] = []
+
+    for svc, r in services:
+        if r.status == Status.CRITICAL:
+            reasons = []
+            if r.system.down:
+                reasons.append(f"servers {r.system.online}/{len(r.system.servers)} online")
+            if r.show_api_metrics and r.api:
+                if r.api.success_rate_pct is not None and r.api.success_rate_pct < 95:
+                    reasons.append(f"success {r.api.success_rate_pct:.1f}%")
+                if r.api.error_rate_pct is not None and r.api.error_rate_pct >= 5:
+                    reasons.append(f"errors {r.api.error_rate_pct:.2f}%")
+                if r.api.avg_latency_p50_ms is not None and r.api.avg_latency_p50_ms >= 1000:
+                    reasons.append(f"p50 {r.api.avg_latency_p50_ms:.0f}ms")
+            detail = " · ".join(reasons) if reasons else "see full report"
+            crit_lines.append(f"- 🔴 **{svc}** · {detail}")
+        elif r.status == Status.WARNING:
+            reasons = []
+            if r.system.down:
+                reasons.append(f"servers {r.system.online}/{len(r.system.servers)} online")
+            if r.show_api_metrics and r.api:
+                if r.api.success_rate_pct is not None and r.api.success_rate_pct < 99:
+                    reasons.append(f"success {r.api.success_rate_pct:.1f}%")
+                if r.api.error_rate_pct is not None and r.api.error_rate_pct >= 1:
+                    reasons.append(f"errors {r.api.error_rate_pct:.2f}%")
+                if r.api.avg_latency_p50_ms is not None and r.api.avg_latency_p50_ms >= 500:
+                    reasons.append(f"p50 {r.api.avg_latency_p50_ms:.0f}ms")
+            detail = " · ".join(reasons) if reasons else "see full report"
+            warn_lines.append(f"- 🟡 **{svc}** · {detail}")
+
+    # Pipeline-level flags (Kafka, CDC, etc.)
+    for severity, desc in extra_flags:
+        line = f"- {'🔴' if severity == 'crit' else '🟡'} {desc}"
+        if severity == "crit":
+            crit_lines.append(line)
+        else:
+            warn_lines.append(line)
+
+    if not crit_lines and not warn_lines:
+        return []
+
+    counts = []
+    if crit_lines:
+        counts.append(f"🔴 {len(crit_lines)} critical")
+    if warn_lines:
+        counts.append(f"🟡 {len(warn_lines)} warning")
+
+    lines: list[str] = [
+        "### ⚠️ Flags   ·   " + " · ".join(counts),
+        "",
+    ]
+    lines += crit_lines
+    lines += warn_lines
+    lines.append("")
+    return lines
+
+
+# ── Per-group L0 metrics blocks ────────────────────────────────────────────────
+# These import from hl_canvas_renderer to avoid duplicating rendering logic.
+
+def _render_uaa_l0_block(
+    uaa_biz: Optional[list[Any]],
+    ti_kafka: Optional[Any],
+) -> list[str]:
+    """UAA L0: Business Trends table + Kafka TI rows (flagged only)."""
+    from .hl_canvas_renderer import (
+        _render_l0_uaa_biz,
+        _render_l0_ti_kafka,
+    )
+
+    _flags: list[tuple[int, str]] = []   # collect flags but discard — already shown above
+
+    biz_rows = _render_l0_uaa_biz(uaa_biz or [], _flags)
+
+    if biz_rows and ti_kafka:
+        kafka_rows = _render_l0_ti_kafka(ti_kafka, _flags)
+        if kafka_rows:
+            # Splice kafka rows before the trailing "" that closes the table
+            biz_rows = biz_rows[:-1] + kafka_rows + [""]
+    elif not biz_rows and ti_kafka:
+        kafka_rows = _render_l0_ti_kafka(ti_kafka, _flags)
+        if kafka_rows:
+            biz_rows = (
+                ["### Business Trends — UAA", "",
+                 "| Metric | Current | Trend | Status |", "|---|---|---|---|"]
+                + kafka_rows
+                + [""]
+            )
+
+    # If everything is healthy and there's no biz data, show a healthy Kafka line
+    if not biz_rows and ti_kafka is not None and not ti_kafka._flag_items():
+        biz_rows = ["_Kafka TI Pipeline: 🟢 all metrics nominal — no flags_", ""]
+
+    return biz_rows
+
+
+def _render_dp_l0_block(
+    dp_biz: Optional[list[Any]],
+    dp_l0: Any,
+    emr: Any,
+    airflow: Any,
+) -> list[str]:
+    """DP L0: Data Quality Trends table."""
+    from .hl_canvas_renderer import _render_l0_dp
+    _flags: list[tuple[int, str]] = []
+    return _render_l0_dp(dp_biz, dp_l0, emr, airflow, _flags)
+
+
+def _render_central_l0_block(central_biz: Optional[list[Any]]) -> list[str]:
+    """Central Services L0: Business Metrics Scorecard."""
+    if not central_biz:
+        return []
+    from .hl_canvas_renderer import _render_l0_central_scorecard
+    _flags: list[tuple[int, str]] = []
+    return _render_l0_central_scorecard(central_biz, _flags)
+
+
+def _render_uks_l0_block(uks: Any) -> list[str]:
+    """UKS L0: KYC pass rate + Celery task health."""
+    if uks is None:
+        return []
+    from .hl_canvas_renderer import _render_l0_uks
+    _flags: list[tuple[int, str]] = []
+    return _render_l0_uks(uks, _flags)
+
+
+# ── Per-group canvas public entry points ───────────────────────────────────────
+
+def render_l0_group_canvas(
+    group_name: str,
+    services: list[tuple[str, L0Report]],
+    date_str: str,
+    *,
+    # UAA-specific
+    uaa_biz_metrics: Optional[list[Any]] = None,
+    ti_kafka_metrics: Optional[Any] = None,
+    # DP-specific
+    dp_biz_metrics: Optional[list[Any]] = None,
+    dp_l0_report: Optional[Any] = None,
+    emr_report: Optional[Any] = None,
+    airflow_health: Optional[Any] = None,
+    # Central-specific
+    central_biz_metrics: Optional[list[Any]] = None,
+    # UKS-specific
+    uks_metrics: Optional[Any] = None,
+) -> str:
+    """Render a focused L0 manager canvas for a single group.
+
+    Contains exactly what the HL canvas L0 section shows — service health,
+    group-specific business/ops trends — distilled to what a manager needs:
+
+      · A plain-English health verdict ("All 8 services running and healthy …")
+      · Flagged items at the top (critical first, then warnings)
+      · Compact service-health table  (status · servers · success · error · P50)
+      · Group-specific L0 metrics (Business Trends / Data Quality / Scorecard / KYC)
+
+    Zero extra VM queries — reuses data already collected by the HL report job.
+    """
+    if not services:
+        return ""
+
+    ts_str = datetime.now(IST).strftime("%I:%M %p IST")
+
+    # ── Gather pipeline-level flags for the verdict & flags section ────────────
+    extra_flags: list[tuple[str, str]] = []
+    if group_name == "UAA Services" and ti_kafka_metrics is not None:
+        extra_flags = ti_kafka_metrics._flag_items()
+    elif group_name == "Data Platform":
+        # Surface CDC / Airflow / EMR critical items from the DP L0 block
+        from .hl_canvas_renderer import _render_l0_dp
+        _tmp: list[tuple[int, str]] = []
+        _render_l0_dp(dp_biz_metrics, dp_l0_report, emr_report, airflow_health, _tmp)
+        extra_flags = [
+            ("crit" if sev == 0 else "warn", desc.split(" · ", 1)[-1])
+            for sev, desc in _tmp
+        ]
+    elif group_name == "UKS Services" and uks_metrics is not None:
+        from .hl_canvas_renderer import _render_l0_uks
+        _tmp2: list[tuple[int, str]] = []
+        _render_l0_uks(uks_metrics, _tmp2)
+        extra_flags = [
+            ("crit" if sev == 0 else "warn", desc.split(" · ", 1)[-1])
+            for sev, desc in _tmp2
+        ]
+    elif group_name == "Central Services" and central_biz_metrics:
+        from .hl_canvas_renderer import _render_l0_central_scorecard
+        _tmp3: list[tuple[int, str]] = []
+        _render_l0_central_scorecard(central_biz_metrics, _tmp3)
+        extra_flags = [
+            ("crit" if sev == 0 else "warn", desc.split(" · ", 1)[-1])
+            for sev, desc in _tmp3
+        ]
+
+    has_extra_flags = bool(extra_flags)
+
+    n_services = len(services)
+    lines: list[str] = []
+
+    # ── Intro line ──────────────────────────────────────────────────────────────
+    lines += [
+        f"_{date_str}  ·  {ts_str}  ·  {n_services} service(s)_",
+        "",
+    ]
+
+    # ── Health verdict — the plain-English "meaningful insight" ────────────────
+    lines += [
+        _group_health_verdict(group_name, services, has_extra_flags),
+        "",
+        "---",
+        "",
+    ]
+
+    # ── Flagged items (service + pipeline level) ───────────────────────────────
+    flag_lines = _render_group_flagged_section(services, extra_flags)
+    if flag_lines:
+        lines += flag_lines
+        lines += ["---", ""]
+    else:
+        lines += ["### ✅ No Flags — All Checks Healthy", "", "---", ""]
+
+    # ── Compact service-health table ───────────────────────────────────────────
+    lines += _render_group(group_name, services)
+    lines += ["---", ""]
+
+    # ── Group-specific L0 metrics ──────────────────────────────────────────────
+    if group_name == "UAA Services":
+        l0_block = _render_uaa_l0_block(uaa_biz_metrics, ti_kafka_metrics)
+    elif group_name == "Data Platform":
+        l0_block = _render_dp_l0_block(dp_biz_metrics, dp_l0_report, emr_report, airflow_health)
+    elif group_name == "Central Services":
+        l0_block = _render_central_l0_block(central_biz_metrics)
+    elif group_name == "UKS Services":
+        l0_block = _render_uks_l0_block(uks_metrics)
+    else:
+        l0_block = []
+
+    if l0_block:
+        lines += l0_block
+        lines += ["---", ""]
+
+    # ── Footer ──────────────────────────────────────────────────────────────────
+    lines += [
+        "_L0 manager snapshot  ·  Success Rate ▲/▼ = change vs 7d baseline  ·  "
+        f"Full L1/L2 analysis → detailed metrics channel_",
+    ]
+
+    return "\n".join(lines)
+
+
+def render_l0_group_summary_blocks(
+    group_name: str,
+    services: list[tuple[str, L0Report]],
+    date_str: str,
+) -> list[dict]:
+    """Block Kit blocks for the chat message that precedes the per-group canvas card."""
+    n_total = len(services)
+    n_crit  = sum(1 for _, r in services if r.status == Status.CRITICAL)
+    n_warn  = sum(1 for _, r in services if r.status == Status.WARNING)
+    n_ok    = sum(1 for _, r in services if r.status == Status.HEALTHY)
+    ts_str  = datetime.now(IST).strftime("%a %d %b %Y · %I:%M %p IST")
+
+    if n_crit:
+        emoji, label = "🔴", "CRITICAL"
+    elif n_warn:
+        emoji, label = "🟡", "DEGRADED"
+    else:
+        emoji, label = "🟢", "ALL HEALTHY"
+
+    flagged = [
+        (svc, r) for svc, r in services
+        if r.status in (Status.CRITICAL, Status.WARNING)
+    ]
+
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f"📊  {group_name} — Manager Snapshot — {date_str}",
+                "emoji": True,
+            },
+        },
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": ts_str}]},
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": (
+                    f"*Overall:* {emoji} *{label}*   ·   "
+                    f"*{n_total}* services   ·   "
+                    f"🔴 {n_crit} critical   🟡 {n_warn} warning   🟢 {n_ok} healthy"
+                ),
+            },
+        },
+    ]
+
+    if flagged:
+        flag_text = "\n".join(
+            f"{'🔴' if r.status == Status.CRITICAL else '🟡'} *{svc}*"
+            for svc, r in flagged[:6]
+        )
+        if len(flagged) > 6:
+            flag_text += f"\n_+{len(flagged) - 6} more — see canvas_"
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": flag_text},
+        })
+
+    blocks.append({
+        "type": "context",
+        "elements": [{"type": "mrkdwn", "text": "L0 metrics + health breakdown → canvas below ↓"}],
+    })
+    return blocks
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────

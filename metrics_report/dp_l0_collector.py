@@ -285,17 +285,23 @@ async def collect_dp_l0(
         f' name=~"{_VM_PATTERN}", job="system_metrics"}} * 100'
     )
 
+    _sem = asyncio.Semaphore(4)
+
+    async def _lim(coro):
+        async with _sem:
+            return await coro
+
     (
         coord_raw, offset_raw, delta_raw, delta_1h_raw,
         baseline_raw, heartbeat_raw, disk_raw,
     ) = await asyncio.gather(
-        _safe_vec(vm, coord_lag_q,        "groupId"),
-        _safe_vec(vm, offset_lag_q,       "groupId"),
-        _safe_vec(vm, offset_delta_q,     "groupId"),
-        _safe_vec(vm, offset_delta_1h_q,  "groupId"),
-        _safe_vec(vm, offset_baseline_q,  "groupId"),
-        _safe_vec(vm, heartbeat_q,        "topic"),
-        _safe_vec(vm, disk_q,             "name"),
+        _lim(_safe_vec(vm, coord_lag_q,        "groupId")),
+        _lim(_safe_vec(vm, offset_lag_q,       "groupId")),
+        _lim(_safe_vec(vm, offset_delta_q,     "groupId")),
+        _lim(_safe_vec(vm, offset_delta_1h_q,  "groupId")),
+        _lim(_safe_vec(vm, offset_baseline_q,  "groupId")),
+        _lim(_safe_vec(vm, heartbeat_q,        "topic")),
+        _lim(_safe_vec(vm, disk_q,             "name")),
     )
 
     coord_index    = _index_coord(coord_raw,     known_sinks)

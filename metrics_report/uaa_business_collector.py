@@ -452,13 +452,19 @@ async def _fetch_alsm_latency() -> list[BusinessMetric]:
     # Per aggregator: [p50, p99_today, p99_yesterday]
     try:
         async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
+            _sem = asyncio.Semaphore(4)
+
+            async def _lim(coro):
+                async with _sem:
+                    return await coro
+
             queries = []
             for agg in aggregators:
                 q99 = _alsm_latency_promql(agg, "0.99")
                 queries += [
-                    vm.query(_alsm_latency_promql(agg, "0.5")),
-                    vm.query(q99),
-                    vm.query(f"{q99} offset 24h"),
+                    _lim(vm.query(_alsm_latency_promql(agg, "0.5"))),
+                    _lim(vm.query(q99)),
+                    _lim(vm.query(f"{q99} offset 24h")),
                 ]
             results = await asyncio.gather(*queries)
     except Exception as exc:
@@ -517,13 +523,19 @@ async def _fetch_saism_latency() -> list[BusinessMetric]:
     aggregators = ["CRBAA", "BRIGHT"]
     try:
         async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
+            _sem = asyncio.Semaphore(4)
+
+            async def _lim(coro):
+                async with _sem:
+                    return await coro
+
             queries = []
             for agg in aggregators:
                 q99 = _saism_latency_promql(agg, "0.99")
                 queries += [
-                    vm.query(_saism_latency_promql(agg, "0.5")),
-                    vm.query(q99),
-                    vm.query(f"{q99} offset 24h"),
+                    _lim(vm.query(_saism_latency_promql(agg, "0.5"))),
+                    _lim(vm.query(q99)),
+                    _lim(vm.query(f"{q99} offset 24h")),
                 ]
             results = await asyncio.gather(*queries)
     except Exception as exc:

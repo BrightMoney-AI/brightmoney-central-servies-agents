@@ -72,6 +72,12 @@ async def collect_uks_metrics(vm: VMClient) -> UKSMetrics:
     )
     api_rpm_q = 'sum by (view)(rate(uks_api_incoming[5m])) * 60'
 
+    _sem = asyncio.Semaphore(4)
+
+    async def _lim(coro):
+        async with _sem:
+            return await coro
+
     (
         kyc_pass_val,
         kyc_total_val,
@@ -80,12 +86,12 @@ async def collect_uks_metrics(vm: VMClient) -> UKSMetrics:
         api_success_raw,
         api_rpm_raw,
     ) = await asyncio.gather(
-        _safe_scalar(vm, kyc_pass_q),
-        _safe_scalar(vm, kyc_total_q),
-        _safe_vec(vm, task_success_q, "task"),
-        _safe_vec(vm, task_p99_q, "task"),
-        _safe_vec(vm, api_success_q, "view"),
-        _safe_vec(vm, api_rpm_q, "view"),
+        _lim(_safe_scalar(vm, kyc_pass_q)),
+        _lim(_safe_scalar(vm, kyc_total_q)),
+        _lim(_safe_vec(vm, task_success_q, "task")),
+        _lim(_safe_vec(vm, task_p99_q, "task")),
+        _lim(_safe_vec(vm, api_success_q, "view")),
+        _lim(_safe_vec(vm, api_rpm_q, "view")),
     )
 
     # Build task metrics

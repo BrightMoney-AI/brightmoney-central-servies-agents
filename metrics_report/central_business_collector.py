@@ -45,7 +45,7 @@ async def collect_business_metrics(vm: VMClient) -> list[BusinessMetric]:
         return []
 
     entries: list[dict] = json.loads(path.read_text())
-    _sem = asyncio.Semaphore(10)  # max 10 in-flight at once; avoids 429 burst
+    _sem = asyncio.Semaphore(6)   # max 6 in-flight at once; global cap is 12
 
     async def run_one(entry: dict) -> list[BusinessMetric]:
         taglist = entry.get("taglist")

@@ -24,7 +24,12 @@ from .config import settings
 from .formatter import to_l0_report
 from .gateway import MetricsGateway
 from .hl_canvas_renderer import render_dp_l2_canvas, render_hl_canvas
-from .l0_manager_renderer import render_l0_manager_canvas, render_l0_manager_summary_blocks
+from .l0_manager_renderer import (
+    render_l0_group_canvas,
+    render_l0_group_summary_blocks,
+    render_l0_manager_canvas,
+    render_l0_manager_summary_blocks,
+)
 from .kafka_connect import fetch_all_connector_health
 from .models import AirflowHealth, Status
 from .services import load_services
@@ -196,6 +201,71 @@ async def _publish_l0_manager_canvas(
             log.info("L0 manager canvas card posted: %s", canvas_url)
         except SlackApiError as exc:
             log.error("L0 manager canvas card post error: %s", exc.response["error"])
+
+
+async def _publish_l0_group_canvas(
+    markdown: str,
+    summary_blocks: list[dict],
+    title: str,
+) -> None:
+    """Post a single per-group L0 manager canvas to SLACK_L0_CHANNEL_ID.
+
+    Each group (UAA / DP / Central / UKS) gets its own canvas posted as a
+    separate message to the manager channel — managers can read them in order
+    or jump to the group they care about.
+    """
+    channel = settings.slack_l0_channel_id
+    client  = AsyncWebClient(token=settings.slack_bot_token)
+
+    if len(markdown) > _MAX_CANVAS_CHARS:
+        markdown = markdown[:_MAX_CANVAS_CHARS].rsplit("\n", 1)[0]
+        markdown += "\n\n> *Canvas truncated — content exceeded size limit.*\n"
+        log.warning("L0 group canvas truncated to %d chars for %r", len(markdown), title)
+
+    log.info("L0 group canvas: %d chars  title=%r", len(markdown), title)
+
+    try:
+        resp = await client.api_call(
+            "canvases.create",
+            json={
+                "title": title,
+                "document_content": {"type": "markdown", "markdown": markdown},
+            },
+        )
+        canvas_id = resp.get("canvas_id", "")
+        log.info("L0 group canvas created: canvas_id=%s  title=%r", canvas_id, title)
+    except SlackApiError as exc:
+        log.error("L0 group canvas create error [%r]: %s", title, exc.response["error"])
+        return
+
+    canvas_url = ""
+    try:
+        auth      = await client.auth_test()
+        team_id   = auth.get("team_id", "")
+        workspace = auth.get("url", "").rstrip("/")
+        canvas_url = f"{workspace}/docs/{team_id}/{canvas_id}"
+    except SlackApiError:
+        pass
+
+    try:
+        await client.chat_postMessage(
+            channel=channel,
+            text=f"📊 {title}",
+            blocks=summary_blocks,
+        )
+    except SlackApiError as exc:
+        log.error("L0 group canvas summary post error [%r]: %s", title, exc.response["error"])
+
+    if canvas_url:
+        try:
+            await client.chat_postMessage(
+                channel=channel,
+                text=canvas_url,
+                unfurl_links=True,
+            )
+            log.info("L0 group canvas card posted: %s", canvas_url)
+        except SlackApiError as exc:
+            log.error("L0 group canvas card post error [%r]: %s", title, exc.response["error"])
 
 
 async def _publish_hl_canvas(markdown: str, summary_blocks: list[dict], title: str) -> None:
@@ -439,33 +509,58 @@ async def run_hl_report() -> None:
         await _publish_hl_canvas(markdown, summary_blocks, title=canvas_title)
         log.info("HL canvas posted: %r (%d service(s)).", canvas_title, len(collected))
 
-    # ── L0 Manager Snapshot — all groups in one canvas ─────────────────────────
-    # Posts to SLACK_L0_CHANNEL_ID (manager / senior-eng review channel).
-    # Reuses the already-collected `groups` and `uaa_biz_metrics` — zero extra queries.
+    # ── L0 Manager Snapshots — one focused canvas per group ───────────────────
+    # Posts to SLACK_L0_CHANNEL_ID.  Each group (UAA / DP / Central / UKS) gets
+    # its own canvas with L0 metrics + a plain-English health verdict.
+    # Reuses already-collected data — zero extra VM queries.
     if settings.slack_l0_channel_id and groups:
-        l0_title = f"Engineering Health Snapshot — {date_str}"
-        l0_md    = render_l0_manager_canvas(
-            groups, date_str,
-            uaa_biz_metrics=uaa_biz_metrics,
-            ti_kafka_metrics=ti_kafka_metrics,
-        )
-        if l0_md:
-            l0_blocks = render_l0_manager_summary_blocks(groups, date_str)
-            try:
-                await _publish_l0_manager_canvas(l0_md, l0_blocks, title=l0_title)
-                log.info("L0 manager snapshot posted to %s.", settings.slack_l0_channel_id)
-            except Exception as exc:
-                log.error("L0 manager canvas failed: %s", exc)
+        _l0_group_kwargs: dict[str, dict] = {
+            "UAA Services": {
+                "uaa_biz_metrics":   uaa_biz_metrics,
+                "ti_kafka_metrics":  ti_kafka_metrics,
+            },
+            "Data Platform": {
+                "dp_biz_metrics": dp_biz_metrics,
+                "dp_l0_report":   dp_l0_report,
+                "emr_report":     emr_report,
+                "airflow_health": airflow_health,
+            },
+            "Central Services": {
+                "central_biz_metrics": central_biz_metrics,
+            },
+            "UKS Services": {
+                "uks_metrics": uks_metrics,
+            },
+        }
+
+        l0_ordered = [g for g in _GROUP_ORDER if g in groups] + [
+            g for g in groups if g not in _GROUP_ORDER
+        ]
+        for grp in l0_ordered:
+            grp_services = groups[grp]
+            kwargs       = _l0_group_kwargs.get(grp, {})
+            grp_title    = f"{grp} — Manager Snapshot — {date_str}"
+            grp_md       = render_l0_group_canvas(
+                grp, grp_services, date_str, **kwargs
+            )
+            if grp_md:
+                grp_blocks = render_l0_group_summary_blocks(grp, grp_services, date_str)
+                try:
+                    await _publish_l0_group_canvas(grp_md, grp_blocks, title=grp_title)
+                    log.info("L0 group canvas posted: %r", grp_title)
+                except Exception as exc:
+                    log.error("L0 group canvas failed [%r]: %s", grp_title, exc)
 
 
 async def run_l0_manager_only() -> None:
-    """Collect all metrics and post ONLY the L0 manager snapshot canvas.
+    """Collect all metrics and post per-group L0 manager canvases.
 
-    Skips the per-group HL canvases (those go to SLACK_HL_CHANNEL_ID).
+    Posts one focused canvas per group (UAA / DP / Central / UKS) to
+    SLACK_L0_CHANNEL_ID.  Skips the per-group HL canvases (SLACK_HL_CHANNEL_ID).
     Use ``python -m metrics_report.main --l0-now`` to invoke this.
     """
     if not settings.slack_l0_channel_id:
-        log.info("SLACK_L0_CHANNEL_ID not set — L0 manager snapshot skipped.")
+        log.info("SLACK_L0_CHANNEL_ID not set — L0 manager snapshots skipped.")
         return
 
     services = load_services()
@@ -474,9 +569,14 @@ async def run_l0_manager_only() -> None:
     gateway = MetricsGateway(timeout_secs=settings.gateway_timeout_secs)
     groups: dict[str, list[tuple[str, object]]] = defaultdict(list)
 
-    uaa_biz_metrics: list = []
-    ti_kafka_metrics       = None
-    uks_metrics            = None
+    uaa_biz_metrics:     list = []
+    central_biz_metrics: list = []
+    dp_biz_metrics:      list = []
+    ti_kafka_metrics           = None
+    uks_metrics                = None
+    dp_l0_report               = None
+    emr_report                 = None
+    airflow_health             = None
 
     async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
         for service in services:
@@ -489,26 +589,94 @@ async def run_l0_manager_only() -> None:
         from .uks_collector import collect_uks_metrics
         uks_metrics = await collect_uks_metrics(vm)
 
+        from .central_business_collector import collect_business_metrics
+        central_biz_metrics = await collect_business_metrics(vm)
+
+        dp_l0_svc = next((s for s in services if s.display_name == "Data Platform L0"), None)
+        if dp_l0_svc and (dp_l0_svc.kafka_cdc_sinks or dp_l0_svc.kafka_sinks):
+            from .dp_l0_collector import collect_dp_l0
+            dp_l0_report = await collect_dp_l0(
+                vm,
+                dp_l0_svc.kafka_cdc_sinks,
+                dp_l0_svc.kafka_sinks or None,
+            )
+
+    # Out-of-VM collectors (Trino-based)
     from .uaa_business_collector import collect_uaa_business_metrics
     from .uaa_kafka_collector import collect_ti_kafka_metrics
-    uaa_biz_metrics, ti_kafka_metrics = await asyncio.gather(
+    from .dp_business_collector import collect_dp_business_metrics
+    from .emr_collector import collect_emr_metrics
+
+    (
+        uaa_biz_metrics,
+        ti_kafka_metrics,
+        dp_biz_metrics,
+        emr_report,
+    ) = await asyncio.gather(
         collect_uaa_business_metrics(),
         collect_ti_kafka_metrics(),
+        collect_dp_business_metrics(),
+        collect_emr_metrics(),
+    )
+
+    # Airflow health (non-blocking — skip silently if not configured)
+    _, airflow_db_result, view_flow_result = await asyncio.gather(
+        asyncio.sleep(0),
+        fetch_airflow_health(settings.airflow_db_url),
+        fetch_view_flow_health(
+            settings.airflow_api_url,
+            settings.airflow_api_username,
+            settings.airflow_api_password,
+        ),
+    )
+    airflow_health = AirflowHealth(
+        dag_runs=airflow_db_result.dag_runs if airflow_db_result else [],
+        view_flow=view_flow_result,
     )
 
     date_str = datetime.now(IST).strftime("%d %b %Y")
-    l0_title = f"Engineering Health Snapshot — {date_str}"
-    l0_md    = render_l0_manager_canvas(
-        groups, date_str,
-        uaa_biz_metrics=uaa_biz_metrics,
-        ti_kafka_metrics=ti_kafka_metrics,
-    )
-    if l0_md:
-        l0_blocks = render_l0_manager_summary_blocks(groups, date_str)
-        await _publish_l0_manager_canvas(l0_md, l0_blocks, title=l0_title)
-        log.info("L0 manager snapshot posted to %s.", settings.slack_l0_channel_id)
+
+    _l0_group_kwargs: dict[str, dict] = {
+        "UAA Services": {
+            "uaa_biz_metrics":  uaa_biz_metrics,
+            "ti_kafka_metrics": ti_kafka_metrics,
+        },
+        "Data Platform": {
+            "dp_biz_metrics": dp_biz_metrics,
+            "dp_l0_report":   dp_l0_report,
+            "emr_report":     emr_report,
+            "airflow_health": airflow_health,
+        },
+        "Central Services": {
+            "central_biz_metrics": central_biz_metrics,
+        },
+        "UKS Services": {
+            "uks_metrics": uks_metrics,
+        },
+    }
+
+    l0_ordered = [g for g in _GROUP_ORDER if g in groups] + [
+        g for g in groups if g not in _GROUP_ORDER
+    ]
+    posted = 0
+    for grp in l0_ordered:
+        grp_services = groups[grp]
+        kwargs       = _l0_group_kwargs.get(grp, {})
+        grp_title    = f"{grp} — Manager Snapshot — {date_str}"
+        grp_md       = render_l0_group_canvas(grp, grp_services, date_str, **kwargs)
+        if grp_md:
+            grp_blocks = render_l0_group_summary_blocks(grp, grp_services, date_str)
+            try:
+                await _publish_l0_group_canvas(grp_md, grp_blocks, title=grp_title)
+                log.info("L0 group canvas posted: %r", grp_title)
+                posted += 1
+            except Exception as exc:
+                log.error("L0 group canvas failed [%r]: %s", grp_title, exc)
+
+    if posted:
+        log.info("L0 manager snapshots complete: %d group canvas(es) posted to %s.", posted, settings.slack_l0_channel_id)
     else:
-        log.warning("L0 manager canvas was empty — nothing posted.")
+        log.warning("L0 manager: no canvases posted — groups may be empty.")
 
 
 def create_hl_scheduler() -> AsyncIOScheduler:

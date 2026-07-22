@@ -2,6 +2,25 @@
 Thin async wrapper around the VictoriaMetrics Prometheus-compatible HTTP API.
 Supports instant queries (/api/v1/query) returning a single scalar or the
 first result value from a vector.
+
+Concurrency architecture
+────────────────────────
+Multiple collectors (UKS, DP L0, UAA Kafka, ALSM/SAISM, Central Business …)
+each open their own VMClient and fire queries with different local semaphores —
+or none at all.  Without a shared cap the aggregate burst can exceed 30 in-flight
+requests, triggering HTTP 429 storms.
+
+Solution: a single *process-wide* semaphore (_VM_GLOBAL_SEM) that every VMClient
+must hold before issuing an HTTP request.  Local per-collector semaphores remain
+unchanged — they act as tighter flow-specific caps on top of the global limit.
+
+Layered caps (smaller wins):
+  Global:    _VM_GLOBAL_SEM          — default 12 (set VM_MAX_CONCURRENT in .env)
+  Kafka:     uaa_kafka_collector     — Semaphore(4)
+  Central:   central_business_coll.  — Semaphore(10) → effectively min(10, global)
+  UKS:       uks_collector           — Semaphore(4)   (added)
+  DP L0:     dp_l0_collector         — Semaphore(4)   (added)
+  ALSM/SAISM: uaa_business_collector — Semaphore(4)   (added)
 """
 from __future__ import annotations
 import asyncio
@@ -21,6 +40,38 @@ _QUERY_RANGE_PATH = "/api/v1/query_range"
 # When VictoriaMetrics rate-limits a query, back off briefly and try again.
 _MAX_RETRIES   = 3
 _RETRY_DELAY_S = 2.0  # seconds between attempts
+
+# ── Process-wide VM concurrency cap ───────────────────────────────────────────
+# Shared by ALL VMClient instances in this process.  Prevents aggregate bursts
+# even when collectors open independent VMClient connections concurrently.
+# Default: 12.  Override via VM_MAX_CONCURRENT in .env / environment.
+_VM_GLOBAL_SEM_LIMIT: int = 12
+_VM_GLOBAL_SEM: Optional[asyncio.Semaphore] = None
+
+
+def _get_global_sem() -> asyncio.Semaphore:
+    """Return (or lazily create) the process-wide concurrency semaphore.
+
+    Deferred creation avoids binding to an event loop at import time, which
+    would break pytest and multi-loop scenarios.
+    """
+    global _VM_GLOBAL_SEM
+    if _VM_GLOBAL_SEM is None:
+        _VM_GLOBAL_SEM = asyncio.Semaphore(_VM_GLOBAL_SEM_LIMIT)
+    return _VM_GLOBAL_SEM
+
+
+def configure_global_sem(limit: int) -> None:
+    """Override the global concurrency cap (call before any queries are fired).
+
+    Typically called once from config during app startup if VM_MAX_CONCURRENT
+    is set.  Has no effect after the first query has been issued.
+    """
+    global _VM_GLOBAL_SEM, _VM_GLOBAL_SEM_LIMIT
+    _VM_GLOBAL_SEM_LIMIT = limit
+    _VM_GLOBAL_SEM = asyncio.Semaphore(limit)
+    log.info("VM global semaphore set to %d concurrent queries.", limit)
+
 
 # Track whether we've already sent a 429-rate-limit PD alert this process run so
 # we don't re-fire on every concurrent retry storm.  Reset is intentionally
@@ -50,6 +101,10 @@ class VMClient:
     async def _get_with_retry(self, path: str, params: dict) -> httpx.Response:
         """GET with automatic retry on 429 (rate-limited) responses.
 
+        Every request first acquires the process-wide semaphore (_VM_GLOBAL_SEM)
+        before touching the network.  This prevents aggregate bursts when multiple
+        collectors open independent VMClient instances concurrently.
+
         PagerDuty alerting:
           • First 429 encountered → warning alert (dedup_key="vm-http-429").
             Fires immediately so on-call knows rate limiting is happening, even
@@ -58,8 +113,10 @@ class VMClient:
         """
         global _pagerduty_429_alerted
         assert self._client is not None, "VMClient must be used as async context manager"
+        _sem = _get_global_sem()
         for attempt in range(_MAX_RETRIES + 1):
-            resp = await self._client.get(path, params=params)
+            async with _sem:
+                resp = await self._client.get(path, params=params)
 
             if resp.status_code == 429:
                 # Fire a PD warning on the very first 429 we see (process-wide
