@@ -485,10 +485,22 @@ def _render_uaa_l0_block(
     uaa_biz: Optional[list[Any]],
     ti_kafka: Optional[Any],
 ) -> list[str]:
-    """UAA L0: Business Trends table + Kafka TI rows (flagged only)."""
+    """UAA L0: Business Trends table + full Kafka L1 section.
+
+    Business Trends table — always rendered when data is present:
+      · Onboarding by provider, Account Linkings, ALSM/SAISM P99, Plaid Batch
+      · Kafka flagged rows spliced in when there are active flags
+
+    Kafka / TI Pipeline section — always rendered when kafka data exists:
+      · Producer Health (success rate, failures, enrichment errors)
+      · Consumer Lag per group
+      · Consumer / Producer throughput per topic
+      · CDC RR Logs
+    """
     from .hl_canvas_renderer import (
         _render_l0_uaa_biz,
         _render_l0_ti_kafka,
+        _render_l1_ti_kafka,
     )
 
     _flags: list[tuple[int, str]] = []   # collect flags but discard — already shown above
@@ -496,17 +508,17 @@ def _render_uaa_l0_block(
     biz_rows = _render_l0_uaa_biz(uaa_biz or [], _flags)
 
     if biz_rows and ti_kafka:
-        kafka_rows = _render_l0_ti_kafka(ti_kafka, _flags)
-        if kafka_rows:
-            # Splice kafka rows before the trailing "" that closes the table
-            biz_rows = biz_rows[:-1] + kafka_rows + [""]
+        kafka_flag_rows = _render_l0_ti_kafka(ti_kafka, _flags)
+        if kafka_flag_rows:
+            # Splice kafka flagged rows before the trailing "" that closes the table
+            biz_rows = biz_rows[:-1] + kafka_flag_rows + [""]
     elif not biz_rows and ti_kafka:
-        kafka_rows = _render_l0_ti_kafka(ti_kafka, _flags)
-        if kafka_rows:
+        kafka_flag_rows = _render_l0_ti_kafka(ti_kafka, _flags)
+        if kafka_flag_rows:
             biz_rows = (
                 ["### Business Trends — UAA", "",
                  "| Metric | Current | Trend | Status |", "|---|---|---|---|"]
-                + kafka_rows
+                + kafka_flag_rows
                 + [""]
             )
 
@@ -514,7 +526,10 @@ def _render_uaa_l0_block(
     if not biz_rows and ti_kafka is not None and not ti_kafka._flag_items():
         biz_rows = ["_Kafka TI Pipeline: 🟢 all metrics nominal — no flags_", ""]
 
-    return biz_rows
+    # ── Full Kafka L1 section (always shown) ──────────────────────────────────
+    kafka_l1 = _render_l1_ti_kafka(ti_kafka) if ti_kafka is not None else []
+
+    return biz_rows + (["---", ""] + kafka_l1 if kafka_l1 else [])
 
 
 def _render_dp_l0_block(
@@ -522,29 +537,58 @@ def _render_dp_l0_block(
     dp_l0: Any,
     emr: Any,
     airflow: Any,
+    connector_health: Any = None,
 ) -> list[str]:
-    """DP L0: Data Quality Trends table."""
-    from .hl_canvas_renderer import _render_l0_dp
+    """DP L0: Data Quality Trends summary + CDC sink detail + Airflow/connector detail.
+
+    Layer 1 — summary counts (Stale CDC, DBZ Invalid, Compaction, EMR breaches, CDC lag, Airflow)
+    Layer 2 — CDC flagged-sinks detail table (coord lag, offset lag, heartbeat, status)
+    Layer 3 — Airflow DAG per-run table + view-flow failures
+    Layer 4 — Kafka Connect connector health (unhealthy connectors)
+    """
+    from .hl_canvas_renderer import _render_l0_dp, _render_l1_dp
     _flags: list[tuple[int, str]] = []
-    return _render_l0_dp(dp_biz, dp_l0, emr, airflow, _flags)
+    summary = _render_l0_dp(dp_biz, dp_l0, emr, airflow, _flags)
+    detail  = _render_l1_dp(dp_l0, connector_health, airflow, dp_biz, _flags)
+    if summary and detail:
+        return summary + ["---", ""] + detail
+    return summary + detail
 
 
 def _render_central_l0_block(central_biz: Optional[list[Any]]) -> list[str]:
-    """Central Services L0: Business Metrics Scorecard."""
+    """Central Services L0: Scorecard summary + per-section metric values.
+
+    Layer 1 — Scorecard: one bullet per section showing N/M checks healthy with icon.
+    Layer 2 — Full metric values: per-section table of (metric name, value) so managers
+              see the actual numbers, not just pass/fail counts.
+    """
     if not central_biz:
         return []
-    from .hl_canvas_renderer import _render_l0_central_scorecard
+    from .hl_canvas_renderer import _render_l0_central_scorecard, _render_l2_central
     _flags: list[tuple[int, str]] = []
-    return _render_l0_central_scorecard(central_biz, _flags)
+    scorecard = _render_l0_central_scorecard(central_biz, _flags)
+    detail    = _render_l2_central(central_biz)
+    if scorecard and detail:
+        return scorecard + ["---", ""] + detail
+    return scorecard + detail
 
 
 def _render_uks_l0_block(uks: Any) -> list[str]:
-    """UKS L0: KYC pass rate + Celery task health."""
+    """UKS L0: KYC overview + per-task P99 table + per-view API breakdown.
+
+    Layer 1 — KYC Overview: pass rate, fail rate, task summary count.
+    Layer 2 — Celery Tasks detail: per-task success rate and P99 latency for all tasks.
+    Layer 3 — API Views: per-view success rate and req/min (high-volume views first).
+    """
     if uks is None:
         return []
-    from .hl_canvas_renderer import _render_l0_uks
+    from .hl_canvas_renderer import _render_l0_uks, _render_l1_uks
     _flags: list[tuple[int, str]] = []
-    return _render_l0_uks(uks, _flags)
+    overview = _render_l0_uks(uks, _flags)
+    detail   = _render_l1_uks(uks, _flags)
+    if overview and detail:
+        return overview + ["---", ""] + detail
+    return overview + detail
 
 
 # ── Per-group canvas public entry points ───────────────────────────────────────
@@ -562,6 +606,7 @@ def render_l0_group_canvas(
     dp_l0_report: Optional[Any] = None,
     emr_report: Optional[Any] = None,
     airflow_health: Optional[Any] = None,
+    connector_health: Optional[Any] = None,
     # Central-specific
     central_biz_metrics: Optional[list[Any]] = None,
     # UKS-specific
@@ -649,7 +694,7 @@ def render_l0_group_canvas(
     if group_name == "UAA Services":
         l0_block = _render_uaa_l0_block(uaa_biz_metrics, ti_kafka_metrics)
     elif group_name == "Data Platform":
-        l0_block = _render_dp_l0_block(dp_biz_metrics, dp_l0_report, emr_report, airflow_health)
+        l0_block = _render_dp_l0_block(dp_biz_metrics, dp_l0_report, emr_report, airflow_health, connector_health)
     elif group_name == "Central Services":
         l0_block = _render_central_l0_block(central_biz_metrics)
     elif group_name == "UKS Services":
