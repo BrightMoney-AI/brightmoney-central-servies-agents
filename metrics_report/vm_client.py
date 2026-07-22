@@ -3,28 +3,36 @@ Thin async wrapper around the VictoriaMetrics Prometheus-compatible HTTP API.
 Supports instant queries (/api/v1/query) returning a single scalar or the
 first result value from a vector.
 
-Concurrency architecture
-────────────────────────
-Multiple collectors (UKS, DP L0, UAA Kafka, ALSM/SAISM, Central Business …)
-each open their own VMClient and fire queries with different local semaphores —
-or none at all.  Without a shared cap the aggregate burst can exceed 30 in-flight
-requests, triggering HTTP 429 storms.
+Rate-limiting architecture (two-layer)
+───────────────────────────────────────
+Layer 1 — Token-bucket rate limiter  (_VMRateLimiter / _vm_rate_limiter)
+  Limits *requests per second* across ALL VMClient instances.
+  Default: 10 req/s with a burst of 10.  This is the primary defence against
+  HTTP 429 — VM rate-limits by req/s, not by concurrent connections.
+  Configurable via VM_MAX_RPS in .env.
 
-Solution: a single *process-wide* semaphore (_VM_GLOBAL_SEM) that every VMClient
-must hold before issuing an HTTP request.  Local per-collector semaphores remain
-unchanged — they act as tighter flow-specific caps on top of the global limit.
+Layer 2 — Process-wide concurrency cap  (_VM_GLOBAL_SEM)
+  Limits *in-flight concurrent requests* across all VMClient instances.
+  Prevents thread/connection exhaustion when requests are slow (e.g. range
+  queries) and many collectors open independent VMClient connections at once.
+  Default: 10.  Configurable via VM_MAX_CONCURRENT in .env.
 
-Layered caps (smaller wins):
-  Global:    _VM_GLOBAL_SEM          — default 12 (set VM_MAX_CONCURRENT in .env)
-  Kafka:     uaa_kafka_collector     — Semaphore(4)
-  Central:   central_business_coll.  — Semaphore(10) → effectively min(10, global)
-  UKS:       uks_collector           — Semaphore(4)   (added)
-  DP L0:     dp_l0_collector         — Semaphore(4)   (added)
-  ALSM/SAISM: uaa_business_collector — Semaphore(4)   (added)
+Per-collector local semaphores (smaller wins, inside the global cap):
+  Kafka:      uaa_kafka_collector     — Semaphore(4)
+  Central:    central_business_coll.  — Semaphore(6)
+  UKS:        uks_collector           — Semaphore(4)
+  DP L0:      dp_l0_collector         — Semaphore(4)
+  ALSM/SAISM: uaa_business_collector  — Semaphore(4)
+
+Request flow:
+  await _vm_rate_limiter.acquire()   # wait for a token (rate limit)
+  async with _vm_global_sem:         # wait for a concurrency slot
+      resp = await httpx.get(...)    # actual HTTP call
 """
 from __future__ import annotations
 import asyncio
 import logging
+import time as _time
 from typing import Optional
 
 import httpx
@@ -37,24 +45,86 @@ _QUERY_PATH       = "/api/v1/query"
 _QUERY_RANGE_PATH = "/api/v1/query_range"
 
 # Retry configuration for HTTP 429 (Too Many Requests).
-# When VictoriaMetrics rate-limits a query, back off briefly and try again.
 _MAX_RETRIES   = 3
 _RETRY_DELAY_S = 2.0  # seconds between attempts
 
-# ── Process-wide VM concurrency cap ───────────────────────────────────────────
-# Shared by ALL VMClient instances in this process.  Prevents aggregate bursts
-# even when collectors open independent VMClient connections concurrently.
-# Default: 12.  Override via VM_MAX_CONCURRENT in .env / environment.
-_VM_GLOBAL_SEM_LIMIT: int = 12
+
+# ── Layer 1: Token-bucket rate limiter ────────────────────────────────────────
+
+class _VMRateLimiter:
+    """Async token-bucket rate limiter shared across all VMClient instances.
+
+    Allows short bursts (up to `burst` tokens) then settles to `rate` req/s.
+    Thread-safe within a single asyncio event loop.
+    """
+
+    def __init__(self, rate: float = 10.0, burst: float = 10.0) -> None:
+        self.rate  = rate   # tokens refilled per second
+        self.burst = burst  # max bucket size
+        self._tokens  = burst
+        self._updated = _time.monotonic()
+        self._lock: Optional[asyncio.Lock] = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+
+    async def acquire(self) -> None:
+        """Block until one token is available, then consume it."""
+        lock = self._get_lock()
+        while True:
+            async with lock:
+                now     = _time.monotonic()
+                elapsed = now - self._updated
+                self._tokens  = min(self.burst, self._tokens + elapsed * self.rate)
+                self._updated = now
+                if self._tokens >= 1.0:
+                    self._tokens -= 1.0
+                    return
+                # Calculate how long until the next token arrives
+                wait = (1.0 - self._tokens) / self.rate
+            # Release the lock while sleeping so other coroutines can check
+            await asyncio.sleep(wait)
+
+    def reconfigure(self, rate: float, burst: float) -> None:
+        self.rate  = rate
+        self.burst = burst
+        self._tokens  = burst   # reset bucket on reconfigure
+        self._updated = _time.monotonic()
+        log.info("VM rate limiter set to %.1f req/s (burst=%s).", rate, burst)
+
+
+_vm_rate_limiter: Optional[_VMRateLimiter] = None
+
+
+def _get_rate_limiter() -> _VMRateLimiter:
+    """Return (or lazily create) the process-wide rate limiter."""
+    global _vm_rate_limiter
+    if _vm_rate_limiter is None:
+        _vm_rate_limiter = _VMRateLimiter()
+    return _vm_rate_limiter
+
+
+def configure_rate_limiter(rate: float, burst: Optional[float] = None) -> None:
+    """Set the global VM request rate (call from config at startup).
+
+    Args:
+        rate:  Max sustained requests per second.
+        burst: Max burst size (default: same as rate).
+    """
+    rl = _get_rate_limiter()
+    rl.reconfigure(rate=rate, burst=burst if burst is not None else rate)
+
+
+# ── Layer 2: Process-wide concurrency cap ─────────────────────────────────────
+
+_VM_GLOBAL_SEM_LIMIT: int = 10
 _VM_GLOBAL_SEM: Optional[asyncio.Semaphore] = None
 
 
 def _get_global_sem() -> asyncio.Semaphore:
-    """Return (or lazily create) the process-wide concurrency semaphore.
-
-    Deferred creation avoids binding to an event loop at import time, which
-    would break pytest and multi-loop scenarios.
-    """
+    """Return (or lazily create) the process-wide concurrency semaphore."""
     global _VM_GLOBAL_SEM
     if _VM_GLOBAL_SEM is None:
         _VM_GLOBAL_SEM = asyncio.Semaphore(_VM_GLOBAL_SEM_LIMIT)
@@ -62,20 +132,14 @@ def _get_global_sem() -> asyncio.Semaphore:
 
 
 def configure_global_sem(limit: int) -> None:
-    """Override the global concurrency cap (call before any queries are fired).
-
-    Typically called once from config during app startup if VM_MAX_CONCURRENT
-    is set.  Has no effect after the first query has been issued.
-    """
+    """Override the global concurrency cap (call from config at startup)."""
     global _VM_GLOBAL_SEM, _VM_GLOBAL_SEM_LIMIT
     _VM_GLOBAL_SEM_LIMIT = limit
     _VM_GLOBAL_SEM = asyncio.Semaphore(limit)
     log.info("VM global semaphore set to %d concurrent queries.", limit)
 
 
-# Track whether we've already sent a 429-rate-limit PD alert this process run so
-# we don't re-fire on every concurrent retry storm.  Reset is intentionally
-# not done — a new deploy/restart starts fresh.
+# Track whether we've already sent a 429-rate-limit PD alert this process run.
 _pagerduty_429_alerted = False
 
 
@@ -113,9 +177,11 @@ class VMClient:
         """
         global _pagerduty_429_alerted
         assert self._client is not None, "VMClient must be used as async context manager"
+        _rl  = _get_rate_limiter()
         _sem = _get_global_sem()
         for attempt in range(_MAX_RETRIES + 1):
-            async with _sem:
+            await _rl.acquire()          # Layer 1: respect req/s limit
+            async with _sem:             # Layer 2: cap concurrent in-flight
                 resp = await self._client.get(path, params=params)
 
             if resp.status_code == 429:

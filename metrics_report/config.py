@@ -12,11 +12,14 @@ class Settings(BaseSettings):
     gateway_timeout_secs: float = 5.0
     query_window: str = "24h"
 
-    # Process-wide cap on concurrent VictoriaMetrics HTTP requests.
-    # All VMClient instances (shared vm + independent collectors) compete for
-    # this budget.  Per-collector semaphores remain as tighter local caps.
-    # Raise cautiously — VM rate-limits above ~15–20 concurrent requests.
-    vm_max_concurrent: int = 12
+    # VictoriaMetrics rate / concurrency controls.
+    # vm_max_rps:        max requests per second across ALL collectors (token bucket).
+    #                    VM rate-limits at ~30 req/s; keep well below that.
+    # vm_max_concurrent: max in-flight concurrent requests (semaphore).
+    #                    Independent of rate — prevents connection exhaustion on
+    #                    slow/range queries.
+    vm_max_rps:        float = 10.0
+    vm_max_concurrent: int   = 10
 
     slack_bot_token: str
     slack_channel_id: str
@@ -86,5 +89,6 @@ settings = Settings()
 
 # Apply the configured global VM concurrency limit immediately on startup.
 # Must run after Settings() so .env values are resolved.
-from .vm_client import configure_global_sem as _cfg_sem  # noqa: E402
+from .vm_client import configure_global_sem as _cfg_sem, configure_rate_limiter as _cfg_rl  # noqa: E402
+_cfg_rl(settings.vm_max_rps)
 _cfg_sem(settings.vm_max_concurrent)
