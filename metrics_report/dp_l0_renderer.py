@@ -12,21 +12,19 @@ from .dp_l0_collector import (
     DPL0Report, SinkHealth, VMDiskHealth,
     _COORD_LAG_CRIT, _COORD_LAG_WARN,
     _HEARTBEAT_MIN, _DISK_WARN_PCT, _DISK_CRIT_PCT,
-    _LAG_DELTA_CRIT,
+    _GROWTH_WARN, _GROWTH_CRIT,
 )
 
 
 # ── icon helpers ───────────────────────────────────────────────────────────────
 
 def _sink_overall_icon(s: SinkHealth) -> str:
-    if (
-        s.coord_status == "critical"
-        or s.lag_delta_status == "critical"
-        or s.heartbeat_status == "critical"
-    ):
+    if s.status == "critical":
         return "🔴"
-    if s.is_flagged:
+    if s.status == "warning":
         return "🟡"
+    if s.status == "unknown":
+        return "⚪"
     return "🟢"
 
 
@@ -63,9 +61,9 @@ def _render_sink(s: SinkHealth) -> str:
     if s.offset_lag is not None:
         trend_str = ""
         if s.lag_increasing:
-            delta_icon = "🔴" if s.lag_delta_status == "critical" else "🟡"
-            delta_val  = f"{s.offset_lag_delta:+,.0f}" if s.offset_lag_delta is not None else "?"
-            trend_str  = f"  {delta_icon} **+{_fmt_abs(s.offset_lag_delta)} over 24 h** (still growing)"
+            delta_icon = "🔴" if s.status == "critical" else "🟡"
+            ratio_str  = f" ({s.growth_ratio:.1f}× normal)" if s.growth_ratio is not None else ""
+            trend_str  = f"  {delta_icon} **+{_fmt_abs(s.offset_lag_delta)} over 24 h** (still growing{ratio_str})"
         elif s.offset_lag_delta is not None and s.offset_lag_delta < 0:
             trend_str = f"  🟢 {_fmt_abs(s.offset_lag_delta)} recovered over 24 h"
         lines.append(f"  - Offset Lag: {s.offset_lag:,.0f}{trend_str}")
@@ -175,9 +173,9 @@ def render_dp_l0_canvas(report: DPL0Report, title: str = "") -> str:
     lines.append("---")
     lines.append("")
     lines.append(
-        f"_Thresholds: coord lag crit >{_COORD_LAG_CRIT:,} · "
-        f"lag delta crit >{_LAG_DELTA_CRIT:,} over 24 h · "
-        f"throughput crit <{_HEARTBEAT_MIN} msg/5m · "
+        f"_Thresholds: lag ≥{_GROWTH_CRIT:.0f}× own 7d normal & rising → crit, "
+        f"≥{_GROWTH_WARN:.0f}× & rising → warn · "
+        f"throughput crit <{_HEARTBEAT_MIN} msg/5m (with backlog) · "
         f"disk crit >{_DISK_CRIT_PCT:.0f}% (VM-level)_"
     )
 

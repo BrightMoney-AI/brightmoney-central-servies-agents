@@ -1,16 +1,31 @@
 """
 dp_l0_collector.py — Data Platform L0: CDC pipeline health for all iceberg CDC sinks.
 
-Checks per sink (driven by kafka_cdc_sinks in services.json):
-  1. Coord Lag    (MaxOffsetLag instant)     — high absolute value
-  2. Offset Lag   (SumOffsetLag instant)     — current depth
-  3. Lag Trend    (delta SumOffsetLag [24h]) — positive = still growing over 24 h
-  4. Heartbeat    (rate[5m]*300 msg/min)     — < 50 → stalled connector
+Health philosophy — trend & baseline relative, not fixed absolute thresholds
+---------------------------------------------------------------------------
+A sink is judged against *its own normal* and *which way it is moving right
+now*, so a busy sink that always carries a large-but-stable backlog is not
+flagged, while a quiet sink that suddenly starts climbing is. Concretely:
+
+  • growth_ratio = offset_lag / max(7d-median baseline, floor)   — how far
+    above the sink's own normal it currently sits.
+  • rising        = 1h slope (delta[1h]) > noise, falling back to 24h delta —
+    is the backlog still climbing right now?
+  • draining      = slope is negative — recovering, never flagged.
+  • stalled       = heartbeat ≈ 0 while a real backlog exists — consumer dead.
+
+Signals collected per sink (driven by kafka_cdc_sinks in services.json):
+  1. Coord Lag    (MaxOffsetLag instant)          — informational only
+  2. Offset Lag   (SumOffsetLag instant)          — current depth
+  3. Lag Δ 24h    (delta SumOffsetLag [24h])      — coarse trend
+  4. Lag Δ 1h     (delta SumOffsetLag [1h])       — current slope
+  5. Baseline     (median SumOffsetLag [7d])      — the sink's own normal
+  6. Heartbeat    (rate[5m]*300 msg/min)          — < min → stalled consumer
 
 Checks per VM (p-iceberg-sink-.* | p-debezium.*):
-  5. Disk %       — > 80 % warning, > 90 % critical
+  7. Disk %       — > 80 % warning, > 90 % critical
 
-All 5 checks run as concurrent batch queries — no per-sink round-trips.
+All checks run as concurrent batch queries — no per-sink round-trips.
 """
 from __future__ import annotations
 
@@ -24,11 +39,25 @@ from .vm_client import VMClient
 log = logging.getLogger(__name__)
 
 # ── thresholds ─────────────────────────────────────────────────────────────────
+# Trend & baseline relative — a sink is judged against its own 7d normal and
+# whether it is climbing *right now*, not against fixed absolute depths.
+_BASELINE_FLOOR  = 1_000    # floor under the 7d-median so a near-zero baseline can't
+                            # make growth_ratio explode on tiny absolute lag.
+_BACKLOG_FLOOR   = 1_000    # a "real" backlog — stall detection needs at least this.
+_GROWTH_WARN     = 2.0      # offset_lag ≥ 2× its own baseline → warning territory
+_GROWTH_CRIT     = 4.0      # offset_lag ≥ 4× its own baseline → critical territory
+_SLOPE_NOISE     = 500      # |delta[1h]| below this is flat (sampling jitter)
+_LAG_DELTA_NOISE = 100      # |delta[24h]| below this is flat
+_HEARTBEAT_MIN   = 5        # total msgs in 5-min window; below this → stalled (normal ~20)
+# Absolute backstop — used only when a sink has no usable baseline (new sink,
+# gap in 7d history) so growth_ratio can't be computed.
+_ABS_WARN        = 25_000
+_ABS_CRIT        = 100_000
+
+# Coordinator lag is informational only (never flags); kept for display context.
 _COORD_LAG_WARN  = 1_000
 _COORD_LAG_CRIT  = 10_000
-_LAG_DELTA_NOISE = 100      # ignore tiny positive deltas (sampling jitter)
-_LAG_DELTA_CRIT  = 5_000    # grew by this much over 24 h → critical
-_HEARTBEAT_MIN   = 5        # total msgs in 5-min window; below this → stalled (normal ~20)
+
 _DISK_WARN_PCT   = 80.0
 _DISK_CRIT_PCT   = 90.0
 
@@ -43,13 +72,107 @@ class SinkHealth:
     debezium: Optional[str]           # Debezium connector name (reference only)
     heartbeat_topic: Optional[str]    # exact Kafka topic — None means no heartbeat configured
 
-    coord_lag: Optional[float] = None         # MaxOffsetLag (instant)
-    offset_lag: Optional[float] = None        # SumOffsetLag (instant)
-    offset_lag_delta: Optional[float] = None  # delta([24h]); positive = still growing
-    heartbeat_rate: Optional[float] = None    # msg/5m window
+    coord_lag: Optional[float] = None            # MaxOffsetLag (instant) — informational
+    offset_lag: Optional[float] = None           # SumOffsetLag (instant) — current depth
+    offset_lag_delta: Optional[float] = None     # delta([24h]); positive = grew over the day
+    offset_lag_delta_1h: Optional[float] = None  # delta([1h]);  current slope
+    offset_lag_baseline: Optional[float] = None  # median([7d]); the sink's own normal
+    heartbeat_rate: Optional[float] = None        # msg/5m window
+
+    # ── raw trend primitives ────────────────────────────────────────────────────
+    @property
+    def growth_ratio(self) -> Optional[float]:
+        """How far above its own 7d normal the sink currently sits (offset / baseline).
+
+        None when there is no offset reading or no usable baseline — callers then
+        fall back to the absolute backstop.
+        """
+        if self.offset_lag is None or self.offset_lag_baseline is None:
+            return None
+        base = max(self.offset_lag_baseline, _BASELINE_FLOOR)
+        return self.offset_lag / base
 
     @property
+    def rising_24h(self) -> bool:
+        """Backlog grew meaningfully over the past 24 h."""
+        return self.offset_lag_delta is not None and self.offset_lag_delta > _LAG_DELTA_NOISE
+
+    @property
+    def _rising(self) -> bool:
+        """Climbing *right now*: prefer the 1h slope, fall back to the 24h delta.
+
+        The 1h slope is the freshest signal; when it is missing we defer to the
+        coarser 24h trend so a sink still gets gated on direction.
+        """
+        if self.offset_lag_delta_1h is not None:
+            return self.offset_lag_delta_1h > _SLOPE_NOISE
+        return self.rising_24h
+
+    @property
+    def draining(self) -> bool:
+        """Recovering — slope is clearly negative. A draining sink is never flagged."""
+        if self.offset_lag_delta_1h is not None:
+            return self.offset_lag_delta_1h < -_SLOPE_NOISE
+        return self.offset_lag_delta is not None and self.offset_lag_delta < -_LAG_DELTA_NOISE
+
+    @property
+    def stalled(self) -> bool:
+        """Consumer looks dead: heartbeat ≈ 0 while a real backlog exists."""
+        return (
+            self.heartbeat_topic is not None
+            and self.heartbeat_rate is not None
+            and self.heartbeat_rate < _HEARTBEAT_MIN
+            and self.offset_lag is not None
+            and self.offset_lag > _BACKLOG_FLOOR
+        )
+
+    @property
+    def _has_data(self) -> bool:
+        return self.offset_lag is not None
+
+    # ── authoritative health ────────────────────────────────────────────────────
+    @property
+    def status(self) -> str:
+        """Single source of truth: 'critical' | 'warning' | 'ok' | 'unknown'.
+
+        Order of judgement:
+          1. no offset reading at all            → unknown
+          2. stalled consumer with real backlog  → critical
+          3. far above own normal AND climbing   → critical / warning
+          4. (no baseline) absolute backstop     → critical / warning
+          5. otherwise                           → ok
+        A draining sink is never escalated regardless of depth.
+        """
+        if not self._has_data:
+            return "unknown"
+
+        if self.stalled:
+            return "critical"
+
+        ratio = self.growth_ratio
+        if ratio is not None:
+            if ratio >= _GROWTH_CRIT and self._rising:
+                return "critical"
+            if ratio >= _GROWTH_WARN and self.rising_24h and not self.draining:
+                return "warning"
+            return "ok"
+
+        # No usable baseline — judge on absolute depth, still gated on direction.
+        assert self.offset_lag is not None
+        if self.offset_lag >= _ABS_CRIT and self._rising:
+            return "critical"
+        if self.offset_lag >= _ABS_WARN and self.rising_24h and not self.draining:
+            return "warning"
+        return "ok"
+
+    @property
+    def is_flagged(self) -> bool:
+        return self.status in ("warning", "critical")
+
+    # ── informational / display helpers (do not drive flagging) ──────────────────
+    @property
     def coord_status(self) -> str:
+        """Coordinator lag band — informational only, never flags a sink."""
         if self.coord_lag is None:
             return "unknown"
         if self.coord_lag >= _COORD_LAG_CRIT:
@@ -57,24 +180,6 @@ class SinkHealth:
         if self.coord_lag >= _COORD_LAG_WARN:
             return "warning"
         return "ok"
-
-    @property
-    def lag_increasing(self) -> bool:
-        """True when lag has grown meaningfully over the past 24 h and is still above noise."""
-        return (
-            self.offset_lag_delta is not None
-            and self.offset_lag_delta > _LAG_DELTA_NOISE
-            and self.offset_lag is not None
-            and self.offset_lag > _COORD_LAG_WARN
-        )
-
-    @property
-    def lag_delta_status(self) -> str:
-        if not self.lag_increasing:
-            return "ok"
-        if self.offset_lag_delta is not None and self.offset_lag_delta >= _LAG_DELTA_CRIT:
-            return "critical"
-        return "warning"
 
     @property
     def heartbeat_status(self) -> str:
@@ -87,12 +192,9 @@ class SinkHealth:
         return "ok"
 
     @property
-    def is_flagged(self) -> bool:
-        return (
-            self.coord_status in ("warning", "critical")
-            or self.lag_increasing
-            or self.heartbeat_status in ("critical", "unknown")
-        )
+    def lag_increasing(self) -> bool:
+        """Backward-compat alias used by the detailed renderer: rising and above normal."""
+        return self.status in ("warning", "critical") and (self._rising or self.rising_24h)
 
 
 @dataclass
@@ -158,6 +260,16 @@ async def collect_dp_l0(
         'delta(kafka_consumer_group_ConsumerLagMetrics_Value'
         '{groupId=~"cg-control-.*", name="SumOffsetLag"}[24h])'
     )
+    # delta([1h]) = the current slope; the freshest "is it climbing now?" signal
+    offset_delta_1h_q = (
+        'delta(kafka_consumer_group_ConsumerLagMetrics_Value'
+        '{groupId=~"cg-control-.*", name="SumOffsetLag"}[1h])'
+    )
+    # median over 7d = the sink's own normal, robust to spikes
+    offset_baseline_q = (
+        'quantile_over_time(0.5, kafka_consumer_group_ConsumerLagMetrics_Value'
+        '{groupId=~"cg-control-.*", name="SumOffsetLag"}[7d])'
+    )
     # Heartbeat topics are CDC event topics: cdc_xxx.schema.debezium_*heartbeat*
     # Match broadly — exact lookup is done in Python against heartbeat_topic field.
     heartbeat_q = (
@@ -173,17 +285,24 @@ async def collect_dp_l0(
         f' name=~"{_VM_PATTERN}", job="system_metrics"}} * 100'
     )
 
-    coord_raw, offset_raw, delta_raw, heartbeat_raw, disk_raw = await asyncio.gather(
-        _safe_vec(vm, coord_lag_q,    "groupId"),
-        _safe_vec(vm, offset_lag_q,   "groupId"),
-        _safe_vec(vm, offset_delta_q, "groupId"),
-        _safe_vec(vm, heartbeat_q,    "topic"),
-        _safe_vec(vm, disk_q,         "name"),
+    (
+        coord_raw, offset_raw, delta_raw, delta_1h_raw,
+        baseline_raw, heartbeat_raw, disk_raw,
+    ) = await asyncio.gather(
+        _safe_vec(vm, coord_lag_q,        "groupId"),
+        _safe_vec(vm, offset_lag_q,       "groupId"),
+        _safe_vec(vm, offset_delta_q,     "groupId"),
+        _safe_vec(vm, offset_delta_1h_q,  "groupId"),
+        _safe_vec(vm, offset_baseline_q,  "groupId"),
+        _safe_vec(vm, heartbeat_q,        "topic"),
+        _safe_vec(vm, disk_q,             "name"),
     )
 
-    coord_index  = _index_coord(coord_raw,  known_sinks)
-    offset_index = _index_offset(offset_raw, known_sinks)
-    delta_index  = _index_offset(delta_raw,  known_sinks)
+    coord_index    = _index_coord(coord_raw,     known_sinks)
+    offset_index   = _index_offset(offset_raw,   known_sinks)
+    delta_index    = _index_offset(delta_raw,    known_sinks)
+    delta_1h_index = _index_offset(delta_1h_raw, known_sinks)
+    baseline_index = _index_offset(baseline_raw, known_sinks)
     # Index heartbeat by exact topic name — no fuzzy matching needed
     hb_index: dict[str, float] = dict(heartbeat_raw)
 
@@ -197,6 +316,8 @@ async def collect_dp_l0(
             coord_lag=coord_index.get(sink_name),
             offset_lag=offset_index.get(sink_name),
             offset_lag_delta=delta_index.get(sink_name),
+            offset_lag_delta_1h=delta_1h_index.get(sink_name),
+            offset_lag_baseline=baseline_index.get(sink_name),
             heartbeat_rate=hb_index.get(hb_topic) if hb_topic else None,
         ))
 
@@ -209,6 +330,8 @@ async def collect_dp_l0(
             coord_lag=coord_index.get(sink_name),
             offset_lag=offset_index.get(sink_name),
             offset_lag_delta=delta_index.get(sink_name),
+            offset_lag_delta_1h=delta_1h_index.get(sink_name),
+            offset_lag_baseline=baseline_index.get(sink_name),
             heartbeat_rate=None,
         ))
 

@@ -519,8 +519,7 @@ def _dp_l0_summary_blocks(report: object, date_str: str) -> list[dict]:
     if n_flag_s == 0 and n_flag_v == 0:
         overall_emoji, overall_label = "🟢", "ALL HEALTHY"
     elif any(
-        s.coord_status == "critical" or s.lag_delta_status == "critical" or s.heartbeat_status == "critical"
-        for s in r.flagged_sinks
+        s.status == "critical" for s in r.flagged_sinks
     ) or any(v.status == "critical" for v in r.flagged_vms):
         overall_emoji, overall_label = "🔴", "CRITICAL"
     else:

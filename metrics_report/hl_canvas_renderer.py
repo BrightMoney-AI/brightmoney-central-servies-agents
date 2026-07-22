@@ -112,13 +112,13 @@ def _short_sink(name: str) -> str:
 
 
 def _sink_icon(s: Any) -> str:
-    coord  = getattr(s, "coord_status", "ok")
-    lag    = getattr(s, "lag_delta_status", "ok")
-    hb     = getattr(s, "heartbeat_status", "ok")
-    if "critical" in (coord, lag, hb):
+    status = getattr(s, "status", "ok")
+    if status == "critical":
         return "🔴"
-    if getattr(s, "is_flagged", False):
+    if status == "warning":
         return "🟡"
+    if status == "unknown":
+        return "⚪"
     return "🟢"
 
 
@@ -432,23 +432,25 @@ def _render_l0_dp(
                 flags.append((0, f"🔴 DP · L0 · EMR Cube Breaches · {n} breached"))
             rows.append(f"| EMR Cube Breaches | {n} | {icon} |")
 
-    # CDC aggregate lag trend
+    # CDC aggregate lag trend — count sinks lagging vs their own normal, not raw sums
     if dp_l0 and dp_l0.sinks:
-        deltas = [s.offset_lag_delta for s in dp_l0.sinks if s.offset_lag_delta is not None]
-        if deltas:
-            total_delta = sum(deltas)
-            if total_delta > 5_000:
-                icon      = "🔴"
-                trend_str = f"▲ +{total_delta:,.0f} msgs/24h (growing fast)"
-                flags.append((0, f"🔴 DP · L0 · CDC Lag Trend · {trend_str}"))
-            elif total_delta > 100:
-                icon      = "🟡"
-                trend_str = f"▲ +{total_delta:,.0f} msgs/24h (growing)"
-                flags.append((1, f"🟡 DP · L0 · CDC Lag Trend · {trend_str}"))
-            else:
-                icon      = "🟢"
-                trend_str = "stable" if total_delta >= 0 else f"▼ {abs(total_delta):,.0f} msgs/24h (draining)"
-            rows.append(f"| CDC Lag Trend | {trend_str} | {icon} |")
+        all_sinks = list(dp_l0.sinks) + list(getattr(dp_l0, "kafka_sinks", []))
+        n_crit = sum(1 for s in all_sinks if s.status == "critical")
+        n_warn = sum(1 for s in all_sinks if s.status == "warning")
+        if n_crit:
+            icon      = "🔴"
+            trend_str = f"{n_crit} sink(s) critically lagging"
+            if n_warn:
+                trend_str += f" · {n_warn} rising"
+            flags.append((0, f"🔴 DP · L0 · CDC Lag Trend · {trend_str}"))
+        elif n_warn:
+            icon      = "🟡"
+            trend_str = f"{n_warn} sink(s) rising above normal"
+            flags.append((1, f"🟡 DP · L0 · CDC Lag Trend · {trend_str}"))
+        else:
+            icon      = "🟢"
+            trend_str = "all sinks within normal range"
+        rows.append(f"| CDC Lag Trend | {trend_str} | {icon} |")
 
     # Airflow DAG summary
     if airflow and (airflow.dag_runs or airflow.pipeline_runs):
@@ -828,7 +830,13 @@ def _render_l1_dp(
         for s in sorted(dp_l0.sinks, key=lambda x: x.sink):
             icon   = _sink_icon(s)
             coord  = f"{s.coord_lag:,.0f}" if s.coord_lag is not None else "—"
-            offset = f"{s.offset_lag:,.0f}" if s.offset_lag is not None else "—"
+            if s.offset_lag is not None:
+                offset = f"{s.offset_lag:,.0f}"
+                ratio  = getattr(s, "growth_ratio", None)
+                if ratio is not None and ratio >= 1.5:
+                    offset += f" ({ratio:.1f}× normal)"
+            else:
+                offset = "—"
             if s.offset_lag_delta is not None:
                 delta = f"+{s.offset_lag_delta:,.0f}" if s.offset_lag_delta > 0 else f"{s.offset_lag_delta:,.0f}"
             else:
