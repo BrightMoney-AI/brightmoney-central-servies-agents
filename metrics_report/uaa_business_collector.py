@@ -565,6 +565,9 @@ async def _fetch_saism_latency() -> list[BusinessMetric]:
 # Daily snapshot of costs per partner from cost_cube.
 # billing_type = ONE_TIME  → daily cost (per-transaction / usage charges)
 # billing_type = MONTHLY   → maintenance cost (recurring monthly fees)
+#
+# The query fetches the latest available run_date from the table (via MAX subquery)
+# so the report always shows real data even when the cost pipeline is delayed.
 
 _TRINO_PARTNER_COSTS = load_uaa("partner_costs")
 
@@ -576,11 +579,15 @@ async def _fetch_partner_costs() -> list[BusinessMetric]:
         log.error("Partner cost breakdown query failed: %s", exc)
         return []
     if not rows:
-        log.info("Partner costs: no data for today.")
+        log.info("Partner costs: no data available in cost_cube.")
         return []
 
+    # All rows share the same run_date (from the CTE) — read it from the first row
+    raw_date  = rows[0].get("run_date")
+    date_label = str(raw_date) if raw_date is not None else "latest available"
+
     total_daily = 0.0
-    details = ["Partner|One-time Cost|Maintenance Cost|Daily Total"]
+    details = [f"Partner|One-time Cost|Maintenance Cost|Daily Total"]
     for row in rows:
         partner     = str(row.get("partner")          or "Unknown")
         one_time    = float(row.get("one_time_cost")    or 0)
@@ -589,9 +596,9 @@ async def _fetch_partner_costs() -> list[BusinessMetric]:
         details.append(f"{partner}|${one_time:,.2f}|${maintenance:,.2f}|${daily:,.2f}")
         total_daily += daily
 
-    log.info("Partner costs: %d partner(s).", len(rows))
+    log.info("Partner costs: %d partner(s) for run_date=%s.", len(rows), date_label)
     return [BusinessMetric(
-        display_name="Partner Cost Breakdown (Yesterday)",
+        display_name=f"Partner Cost Breakdown ({date_label})",
         query_name="partner_costs",
         section="Partner Costs",
         metric_type="multi_col_table",
