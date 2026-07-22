@@ -129,6 +129,12 @@ async def _collect(vm: VMClient) -> TIKafkaMetrics:
     # ── Scalar queries (run concurrently) ─────────────────────────────────────
     scalar_coros = [
         # [0]  Producer success rate (0–100 %)
+        #
+        # `default 100` (MetricsQL extension) handles two stale-metric cases:
+        #   • Both rate()s return 0 → 0/(0+0) = NaN → default kicks in → 100 %
+        #   • Metric series absent entirely → empty result → default → 100 %
+        # The old `OR on() vector(100)` syntax is not reliably evaluated by
+        # VictoriaMetrics when the LHS is an empty vector after idle periods.
         vm.query(
             "(\n"
             "  rate(bm_kafka_producer_ack_success_count[5m])\n"
@@ -137,7 +143,7 @@ async def _collect(vm: VMClient) -> TIKafkaMetrics:
             "    rate(bm_kafka_producer_ack_success_count[5m])\n"
             "    + rate(bm_kafka_producer_ack_failed_count[5m])\n"
             "  )\n"
-            ") * 100 OR on() vector(100)\n"
+            ") * 100 default 100\n"
         ),
         # [1]  Publishing failures per minute
         vm.query("rate(bm_kafka_publishing_failed_messages_count[5m]) * 60"),
@@ -148,16 +154,18 @@ async def _collect(vm: VMClient) -> TIKafkaMetrics:
         # [4]  Enrichment service errors per minute
         vm.query("rate(publish_batch_to_enrichment_service_error[5m]) * 60"),
         # [5]  CDC API RR success %
+        # `default 100` — returns 100 % when no RR log events are scraped yet
+        # (metric absent or stale) rather than showing N/A in the canvas.
         vm.query(
             'sum(service_api_rr_log_success{environment="prod", exported_job="TRANSACTION_INSIGHT"})'
             ' / sum(total_service_api_rr_log_requests{environment="prod", exported_job="TRANSACTION_INSIGHT"})'
-            ' * 100'
+            ' * 100 default 100'
         ),
         # [6]  CDC API RR logs vs total logs %
         vm.query(
             'sum(total_service_api_rr_log_requests{environment="prod", exported_job="TRANSACTION_INSIGHT"})'
             ' / sum(total_log_requests{environment="prod", exported_job="TRANSACTION_INSIGHT"})'
-            ' * 100'
+            ' * 100 default 0'
         ),
         # [7–9]  Consumer max lag per group
         *[
@@ -210,12 +218,14 @@ async def _collect(vm: VMClient) -> TIKafkaMetrics:
             return 0.0
 
     def _so(idx: int) -> Optional[float]:
-        """Safe scalar extractor — returns None on error/None."""
+        """Safe scalar extractor — returns None on error/None/NaN."""
+        import math
         v = scalar_results[idx]
         if isinstance(v, Exception) or v is None:
             return None
         try:
-            return float(v)
+            f = float(v)
+            return None if math.isnan(f) else f
         except (TypeError, ValueError):
             return None
 
