@@ -32,7 +32,7 @@ WHERE dag_id = 'dp_cosmos_flag_debezium_invalid_tables'
 ORDER BY dag_id, start_date DESC
 """)
 
-# Latest run per (dag_id, IST calendar date) for today + yesterday
+# Latest run per (dag_id, IST calendar date) for today + yesterday.
 _PIPELINE_QUERY = text("""
 SELECT DISTINCT ON (dag_id, ((start_date AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Kolkata')::date)
     dag_id,
