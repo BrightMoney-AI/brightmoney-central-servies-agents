@@ -19,8 +19,13 @@ _QUERY_RANGE_PATH = "/api/v1/query_range"
 
 # Retry configuration for HTTP 429 (Too Many Requests).
 # When VictoriaMetrics rate-limits a query, back off briefly and try again.
-_MAX_RETRIES   = 2
-_RETRY_DELAY_S = 1.5  # seconds between attempts
+_MAX_RETRIES   = 3
+_RETRY_DELAY_S = 2.0  # seconds between attempts
+
+# Track whether we've already sent a 429-rate-limit PD alert this process run so
+# we don't re-fire on every concurrent retry storm.  Reset is intentionally
+# not done — a new deploy/restart starts fresh.
+_pagerduty_429_alerted = False
 
 
 
@@ -45,23 +50,57 @@ class VMClient:
     async def _get_with_retry(self, path: str, params: dict) -> httpx.Response:
         """GET with automatic retry on 429 (rate-limited) responses.
 
-        Any non-2xx response (excluding mid-retry 429s) fires a PagerDuty alert.
-        The dedup_key collapses repeated failures for the same HTTP status code
-        into a single PD incident instead of an alert storm.
+        PagerDuty alerting:
+          • First 429 encountered → warning alert (dedup_key="vm-http-429").
+            Fires immediately so on-call knows rate limiting is happening, even
+            if subsequent retries recover.
+          • Any other non-2xx on the FINAL attempt → critical/warning alert.
         """
+        global _pagerduty_429_alerted
         assert self._client is not None, "VMClient must be used as async context manager"
         for attempt in range(_MAX_RETRIES + 1):
             resp = await self._client.get(path, params=params)
-            if resp.status_code == 429 and attempt < _MAX_RETRIES:
-                log.debug("VictoriaMetrics 429 on attempt %d, retrying in %.1fs", attempt + 1, _RETRY_DELAY_S)
-                await asyncio.sleep(_RETRY_DELAY_S)
-                continue
+
+            if resp.status_code == 429:
+                # Fire a PD warning on the very first 429 we see (process-wide
+                # dedup so a burst of concurrent 429s creates exactly one incident).
+                if not _pagerduty_429_alerted:
+                    _pagerduty_429_alerted = True
+                    asyncio.create_task(fire_alert(
+                        summary="VictoriaMetrics rate-limited (HTTP 429) — queries are being retried",
+                        severity="warning",
+                        source=self._base_url + path,
+                        component="vm_client",
+                        details={
+                            "path": path,
+                            "attempt": attempt + 1,
+                            "max_retries": _MAX_RETRIES,
+                            "retry_delay_s": _RETRY_DELAY_S,
+                        },
+                        dedup_key="vm-http-429",
+                    ))
+                if attempt < _MAX_RETRIES:
+                    log.warning(
+                        "VictoriaMetrics 429 on attempt %d/%d — backing off %.1fs before retry",
+                        attempt + 1, _MAX_RETRIES + 1, _RETRY_DELAY_S,
+                    )
+                    await asyncio.sleep(_RETRY_DELAY_S)
+                    continue
+                # All retries exhausted — escalate to critical
+                asyncio.create_task(fire_alert(
+                    summary=f"VictoriaMetrics persistent rate-limit — all {_MAX_RETRIES + 1} attempts returned 429",
+                    severity="critical",
+                    source=self._base_url + path,
+                    component="vm_client",
+                    details={"path": path, "attempts": _MAX_RETRIES + 1},
+                    dedup_key="vm-http-429-exhausted",
+                ))
+
             if not resp.is_success:
-                # Fire PD alert then propagate the exception.
-                # create_task keeps the coroutine alive even after raise_for_status().
+                # Non-429 failure (5xx, 4xx other) — always alert
                 severity = "critical" if resp.status_code >= 500 else "warning"
                 asyncio.create_task(fire_alert(
-                    summary=f"VictoriaMetrics API non-200: HTTP {resp.status_code} on {path}",
+                    summary=f"VictoriaMetrics API error: HTTP {resp.status_code} on {path}",
                     severity=severity,
                     source=self._base_url + path,
                     component="vm_client",

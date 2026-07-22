@@ -184,9 +184,19 @@ async def _collect(vm: VMClient) -> TIKafkaMetrics:
         vm.query_vector('rate(bm_kafka_producer_published_count{name=~"p-.*"}[5m])', id_label="topic_name"),
     ]
 
+    # ── Concurrency cap ───────────────────────────────────────────────────────
+    # All 18 queries fire at the same time as dozens of other VM queries from
+    # ALSM/SAISM/central-business collectors → causes 429 bursts.
+    # Cap at 4 concurrent to spread load without noticeably slowing the run.
+    _sem = asyncio.Semaphore(4)
+
+    async def _limited(coro):
+        async with _sem:
+            return await coro
+
     scalar_results, vector_results = await asyncio.gather(
-        asyncio.gather(*scalar_coros, return_exceptions=True),
-        asyncio.gather(*vector_coros, return_exceptions=True),
+        asyncio.gather(*[_limited(c) for c in scalar_coros], return_exceptions=True),
+        asyncio.gather(*[_limited(c) for c in vector_coros], return_exceptions=True),
     )
 
     def _s(idx: int) -> float:
