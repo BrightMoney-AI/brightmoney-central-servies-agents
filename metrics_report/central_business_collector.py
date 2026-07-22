@@ -34,13 +34,22 @@ class BusinessMetric:
 
 
 async def collect_business_metrics(vm: VMClient) -> list[BusinessMetric]:
-    """Run all queries from central_business.json; skip entries that return no data."""
+    """Run all queries from central_business.json; skip entries that return no data.
+
+    Queries are issued with a concurrency cap (Semaphore(4)) to avoid bursting
+    VictoriaMetrics with O(100) simultaneous requests and triggering 429s.
+    """
     path = _PROJECT_ROOT / "central_business.json"
     if not path.exists():
         log.warning("central_business.json not found at %s", path)
         return []
 
     entries: list[dict] = json.loads(path.read_text())
+    # Cap at 4 concurrent — matches uaa_kafka_collector's limit.
+    # Keeps total in-flight queries from this collector ≤ 4 at any moment,
+    # preventing 429 bursts on VictoriaMetrics (which rate-limits across all
+    # callers sharing the same cluster).
+    _sem = asyncio.Semaphore(4)
 
     async def run_one(entry: dict) -> list[BusinessMetric]:
         taglist = entry.get("taglist")
@@ -55,7 +64,8 @@ async def collect_business_metrics(vm: VMClient) -> list[BusinessMetric]:
 
         if taglist:
             try:
-                pairs = await vm.query_vector(entry["query"], id_label=taglist)
+                async with _sem:
+                    pairs = await vm.query_vector(entry["query"], id_label=taglist)
             except Exception as exc:
                 log.warning("Business metric query failed [%s]: %s", entry["query_name"], exc)
                 return []
@@ -72,7 +82,8 @@ async def collect_business_metrics(vm: VMClient) -> list[BusinessMetric]:
             ]
 
         try:
-            val = await vm.query(entry["query"])
+            async with _sem:
+                val = await vm.query(entry["query"])
         except Exception as exc:
             log.warning("Business metric query failed [%s]: %s", entry["query_name"], exc)
             return []

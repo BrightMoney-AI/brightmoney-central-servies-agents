@@ -4,15 +4,23 @@ Supports instant queries (/api/v1/query) returning a single scalar or the
 first result value from a vector.
 """
 from __future__ import annotations
+import asyncio
 import logging
 from typing import Optional
 
 import httpx
 
+from .pagerduty import fire_alert
+
 log = logging.getLogger(__name__)
 
 _QUERY_PATH       = "/api/v1/query"
 _QUERY_RANGE_PATH = "/api/v1/query_range"
+
+# Retry configuration for HTTP 429 (Too Many Requests).
+# When VictoriaMetrics rate-limits a query, back off briefly and try again.
+_MAX_RETRIES   = 2
+_RETRY_DELAY_S = 1.5  # seconds between attempts
 
 
 
@@ -34,11 +42,45 @@ class VMClient:
         if self._client:
             await self._client.aclose()
 
+    async def _get_with_retry(self, path: str, params: dict) -> httpx.Response:
+        """GET with automatic retry on 429 (rate-limited) responses.
+
+        Any non-2xx response (excluding mid-retry 429s) fires a PagerDuty alert.
+        The dedup_key collapses repeated failures for the same HTTP status code
+        into a single PD incident instead of an alert storm.
+        """
+        assert self._client is not None, "VMClient must be used as async context manager"
+        for attempt in range(_MAX_RETRIES + 1):
+            resp = await self._client.get(path, params=params)
+            if resp.status_code == 429 and attempt < _MAX_RETRIES:
+                log.debug("VictoriaMetrics 429 on attempt %d, retrying in %.1fs", attempt + 1, _RETRY_DELAY_S)
+                await asyncio.sleep(_RETRY_DELAY_S)
+                continue
+            if not resp.is_success:
+                # Fire PD alert then propagate the exception.
+                # create_task keeps the coroutine alive even after raise_for_status().
+                severity = "critical" if resp.status_code >= 500 else "warning"
+                asyncio.create_task(fire_alert(
+                    summary=f"VictoriaMetrics API non-200: HTTP {resp.status_code} on {path}",
+                    severity=severity,
+                    source=self._base_url + path,
+                    component="vm_client",
+                    details={
+                        "status_code": resp.status_code,
+                        "path": path,
+                        "attempt": attempt + 1,
+                        "body_preview": resp.text[:300],
+                    },
+                    dedup_key=f"vm-http-{resp.status_code}",
+                ))
+            resp.raise_for_status()
+            return resp
+        resp.raise_for_status()  # final attempt already raised; satisfy type checker
+        return resp  # unreachable
+
     async def query(self, promql: str) -> Optional[float]:
         """Execute an instant PromQL query and return the first numeric value."""
-        assert self._client is not None, "VMClient must be used as async context manager"
-        resp = await self._client.get(_QUERY_PATH, params={"query": promql})
-        resp.raise_for_status()
+        resp = await self._get_with_retry(_QUERY_PATH, {"query": promql})
         data = resp.json()
 
         result_type = data.get("data", {}).get("resultType")
@@ -63,9 +105,7 @@ class VMClient:
 
         Uses id_label (default: "name") as the server identifier, falling back to "instance".
         """
-        assert self._client is not None, "VMClient must be used as async context manager"
-        resp = await self._client.get(_QUERY_PATH, params={"query": promql})
-        resp.raise_for_status()
+        resp = await self._get_with_retry(_QUERY_PATH, {"query": promql})
         data = resp.json()
 
         results = data.get("data", {}).get("result", [])
@@ -89,15 +129,13 @@ class VMClient:
         is the aggregated value within that step window (e.g. rate([30m]) at 30m step
         gives non-overlapping 30-minute windows).
         """
-        assert self._client is not None, "VMClient must be used as async context manager"
         import time as _time
         end   = int(_time.time())
         start = end - hours * 3600
-        resp  = await self._client.get(
+        resp  = await self._get_with_retry(
             _QUERY_RANGE_PATH,
-            params={"query": promql, "start": start, "end": end, "step": step},
+            {"query": promql, "start": start, "end": end, "step": step},
         )
-        resp.raise_for_status()
         data    = resp.json()
         results = data.get("data", {}).get("result", [])
         if not results:

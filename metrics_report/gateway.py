@@ -29,20 +29,32 @@ class MetricsGateway:
         """
         Acquire the single-request lock, run coro_fn() with a timeout,
         and return its result. On any error returns None and records the failure.
+
+        On TimeoutError a single retry is attempted with the same timeout window
+        before giving up.  Non-timeout exceptions fail immediately (no retry).
         """
         async with self._lock:
-            try:
-                return await asyncio.wait_for(coro_fn(), timeout=self._timeout)
-            except asyncio.TimeoutError:
-                reason = f"timed out after {self._timeout}s"
-                log.warning("Gateway: %s — %s", name, reason)
-                self.failures.append(FailedQuery(name=name, reason=reason))
-                return None
-            except Exception as exc:
-                reason = str(exc)
-                log.warning("Gateway: %s — %s", name, reason)
-                self.failures.append(FailedQuery(name=name, reason=reason))
-                return None
+            for attempt in range(2):  # attempt 0 = first try, attempt 1 = retry
+                try:
+                    return await asyncio.wait_for(coro_fn(), timeout=self._timeout)
+                except asyncio.TimeoutError:
+                    if attempt == 0:
+                        log.warning(
+                            "Gateway: %s — timed out after %.1fs, retrying…",
+                            name, self._timeout,
+                        )
+                        continue
+                    # Second timeout — give up
+                    reason = f"timed out after {self._timeout}s (both attempts)"
+                    log.warning("Gateway: %s — %s", name, reason)
+                    self.failures.append(FailedQuery(name=name, reason=reason))
+                    return None
+                except Exception as exc:
+                    reason = str(exc)
+                    log.warning("Gateway: %s — %s", name, reason)
+                    self.failures.append(FailedQuery(name=name, reason=reason))
+                    return None
+        return None  # unreachable; satisfies type checker
 
     def reset_failures(self) -> None:
         self.failures = []

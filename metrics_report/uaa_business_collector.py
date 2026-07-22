@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from .queries import load_uaa
 from .trino_client import execute_query
 from .vm_client import VMClient
-from .config import settings
 
 log = logging.getLogger(__name__)
 
@@ -66,7 +65,7 @@ async def _fetch_onboarding_provider_sessions() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_ONBOARDING_PROVIDER_SESSIONS)
     except Exception as exc:
-        log.error("Onboarding provider sessions query failed: %s", exc)
+        log.error("Onboarding provider sessions query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
 
     if not rows:
@@ -114,7 +113,7 @@ async def _fetch_account_linking_by_source() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_ACCOUNT_LINKING_BY_SOURCE)
     except Exception as exc:
-        log.error("Account linking by source query failed: %s", exc)
+        log.error("Account linking by source query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
 
     if not rows:
@@ -157,7 +156,7 @@ async def _fetch_plaid_batch_recency() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PLAID_BATCH_RECENCY)
     except Exception as exc:
-        log.error("Plaid batch recency query failed: %s", exc)
+        log.error("Plaid batch recency query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         return []
@@ -191,7 +190,7 @@ async def _fetch_plaid_batch_metadata_recency() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PLAID_BATCH_METADATA_RECENCY)
     except Exception as exc:
-        log.error("Plaid batch metadata recency query failed: %s", exc)
+        log.error("Plaid batch metadata recency query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows or rows[0].get("recency_hrs") is None:
         return []
@@ -216,7 +215,7 @@ async def _fetch_plaid_batch_historical_recency() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PLAID_BATCH_HISTORICAL_RECENCY)
     except Exception as exc:
-        log.error("Plaid batch historical recency query failed: %s", exc)
+        log.error("Plaid batch historical recency query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         return []
@@ -286,7 +285,7 @@ async def _fetch_plaid_batch_refresh_errors() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PLAID_BATCH_REFRESH_ERRORS)
     except Exception as exc:
-        log.error("Plaid batch refresh errors query failed: %s", exc)
+        log.error("Plaid batch refresh errors query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         return []
@@ -317,7 +316,7 @@ async def _fetch_plaid_batch_trend() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PLAID_BATCH_TREND)
     except Exception as exc:
-        log.error("Plaid batch trend query failed: %s", exc)
+        log.error("Plaid batch trend query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         return []
@@ -345,7 +344,7 @@ async def _fetch_plaid_force_refresh_daily() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PLAID_FORCE_REFRESH_DAILY)
     except Exception as exc:
-        log.error("Plaid force refresh daily metrics query failed: %s", exc)
+        log.error("Plaid force refresh daily metrics query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         return []
@@ -379,7 +378,7 @@ async def _fetch_plaid_force_refresh_errors() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PLAID_FORCE_REFRESH_ERRORS)
     except Exception as exc:
-        log.error("Plaid force refresh errors query failed: %s", exc)
+        log.error("Plaid force refresh errors query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         return []
@@ -410,7 +409,7 @@ async def _fetch_plaid_force_refresh_trend() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PLAID_FORCE_REFRESH_TREND)
     except Exception as exc:
-        log.error("Plaid force refresh trend query failed: %s", exc)
+        log.error("Plaid force refresh trend query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         return []
@@ -447,22 +446,33 @@ def _alsm_latency_promql(aggregator: str, quantile: str = "0.99") -> str:
     )
 
 
-async def _fetch_alsm_latency() -> list[BusinessMetric]:
+async def _fetch_alsm_latency(vm: VMClient) -> list[BusinessMetric]:
+    """Fetch ALSM latency metrics using the caller-supplied VMClient.
+
+    Accepts a shared VMClient so it can reuse an existing TCP connection pool
+    (see collect_uaa_vm_metrics).  No longer creates its own httpx.AsyncClient,
+    which was causing ConnectTimeout when VM was loaded from earlier collectors.
+    """
     aggregators = ["PLAID", "DL_CAPITALONE"]
     # Per aggregator: [p50, p99_today, p99_yesterday]
     try:
-        async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
-            queries = []
-            for agg in aggregators:
-                q99 = _alsm_latency_promql(agg, "0.99")
-                queries += [
-                    vm.query(_alsm_latency_promql(agg, "0.5")),
-                    vm.query(q99),
-                    vm.query(f"{q99} offset 24h"),
-                ]
-            results = await asyncio.gather(*queries)
+        _sem = asyncio.Semaphore(4)
+
+        async def _lim(coro):
+            async with _sem:
+                return await coro
+
+        queries = []
+        for agg in aggregators:
+            q99 = _alsm_latency_promql(agg, "0.99")
+            queries += [
+                _lim(vm.query(_alsm_latency_promql(agg, "0.5"))),
+                _lim(vm.query(q99)),
+                _lim(vm.query(f"{q99} offset 24h")),
+            ]
+        results = await asyncio.gather(*queries)
     except Exception as exc:
-        log.error("ALSM latency query failed: %s", exc)
+        log.error("ALSM latency query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
 
     details    = ["Aggregator|P50|P99|Yesterday P99|Change"]
@@ -513,21 +523,31 @@ def _saism_latency_promql(aggregator: str, quantile: str = "0.99") -> str:
     )
 
 
-async def _fetch_saism_latency() -> list[BusinessMetric]:
+async def _fetch_saism_latency(vm: VMClient) -> list[BusinessMetric]:
+    """Fetch SAISM latency metrics using the caller-supplied VMClient.
+
+    Accepts a shared VMClient so it can reuse an existing TCP connection pool
+    (see collect_uaa_vm_metrics).  No longer creates its own httpx.AsyncClient.
+    """
     aggregators = ["CRBAA", "BRIGHT"]
     try:
-        async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
-            queries = []
-            for agg in aggregators:
-                q99 = _saism_latency_promql(agg, "0.99")
-                queries += [
-                    vm.query(_saism_latency_promql(agg, "0.5")),
-                    vm.query(q99),
-                    vm.query(f"{q99} offset 24h"),
-                ]
-            results = await asyncio.gather(*queries)
+        _sem = asyncio.Semaphore(4)
+
+        async def _lim(coro):
+            async with _sem:
+                return await coro
+
+        queries = []
+        for agg in aggregators:
+            q99 = _saism_latency_promql(agg, "0.99")
+            queries += [
+                _lim(vm.query(_saism_latency_promql(agg, "0.5"))),
+                _lim(vm.query(q99)),
+                _lim(vm.query(f"{q99} offset 24h")),
+            ]
+        results = await asyncio.gather(*queries)
     except Exception as exc:
-        log.error("SAISM latency query failed: %s", exc)
+        log.error("SAISM latency query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
 
     details  = ["Aggregator|P50|P99|Yesterday P99|Change"]
@@ -565,6 +585,9 @@ async def _fetch_saism_latency() -> list[BusinessMetric]:
 # Daily snapshot of costs per partner from cost_cube.
 # billing_type = ONE_TIME  → daily cost (per-transaction / usage charges)
 # billing_type = MONTHLY   → maintenance cost (recurring monthly fees)
+#
+# The query fetches the latest available run_date from the table (via MAX subquery)
+# so the report always shows real data even when the cost pipeline is delayed.
 
 _TRINO_PARTNER_COSTS = load_uaa("partner_costs")
 
@@ -573,14 +596,18 @@ async def _fetch_partner_costs() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PARTNER_COSTS)
     except Exception as exc:
-        log.error("Partner cost breakdown query failed: %s", exc)
+        log.error("Partner cost breakdown query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
-        log.info("Partner costs: no data for today.")
+        log.info("Partner costs: no data available in cost_cube.")
         return []
 
+    # All rows share the same run_date (from the CTE) — read it from the first row
+    raw_date  = rows[0].get("run_date")
+    date_label = str(raw_date) if raw_date is not None else "latest available"
+
     total_daily = 0.0
-    details = ["Partner|One-time Cost|Maintenance Cost|Daily Total"]
+    details = [f"Partner|One-time Cost|Maintenance Cost|Daily Total"]
     for row in rows:
         partner     = str(row.get("partner")          or "Unknown")
         one_time    = float(row.get("one_time_cost")    or 0)
@@ -589,9 +616,9 @@ async def _fetch_partner_costs() -> list[BusinessMetric]:
         details.append(f"{partner}|${one_time:,.2f}|${maintenance:,.2f}|${daily:,.2f}")
         total_daily += daily
 
-    log.info("Partner costs: %d partner(s).", len(rows))
+    log.info("Partner costs: %d partner(s) for run_date=%s.", len(rows), date_label)
     return [BusinessMetric(
-        display_name="Partner Cost Breakdown (Yesterday)",
+        display_name=f"Partner Cost Breakdown ({date_label})",
         query_name="partner_costs",
         section="Partner Costs",
         metric_type="multi_col_table",
@@ -613,7 +640,7 @@ async def _fetch_txn_quality_metrics() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_TXN_QUALITY_METRICS)
     except Exception as exc:
-        log.error("Txn quality metrics query failed: %s", exc)
+        log.error("Txn quality metrics query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         log.info("Txn quality metrics: no data returned.")
@@ -640,20 +667,38 @@ async def _fetch_txn_quality_metrics() -> list[BusinessMetric]:
     )]
 
 
-# ── Public entry point ────────────────────────────────────────────────────────
+# ── Public entry points ───────────────────────────────────────────────────────
+
+async def collect_uaa_vm_metrics(vm: VMClient) -> list[BusinessMetric]:
+    """Collect UAA metrics that require VictoriaMetrics (ALSM + SAISM latency).
+
+    Called inside the shared `async with VMClient(...) as vm:` block in
+    hl_scheduler so that ALSM/SAISM reuse the already-open TCP connection pool
+    rather than opening fresh connections to an already-loaded VM server.
+    """
+    results = await asyncio.gather(
+        _fetch_alsm_latency(vm),
+        _fetch_saism_latency(vm),
+    )
+    metrics = [m for batch in results for m in batch]
+    log.info("UAA VM metrics collected: %d metric(s).", len(metrics))
+    return metrics
+
 
 async def collect_uaa_business_metrics() -> list[BusinessMetric]:
-    """Collect all UAA business metrics from Trino and VictoriaMetrics.
+    """Collect UAA business metrics from Trino (no VictoriaMetrics queries here).
 
-    Fast queries (HTTP + lightweight Trino) run fully concurrently.
+    VM-based metrics (ALSM/SAISM latency) are collected separately via
+    collect_uaa_vm_metrics(vm) which must be called inside a shared VMClient
+    context.  Call sites in hl_scheduler merge both results.
+
+    Fast queries (lightweight Trino) run fully concurrently.
     Plaid/heavy Trino queries run with a concurrency cap of 3 to avoid
     saturating the Trino queue (which triggers 15s–45s retry backoff).
     """
     fast = await asyncio.gather(
         _fetch_onboarding_provider_sessions(),
         _fetch_account_linking_by_source(),
-        _fetch_alsm_latency(),
-        _fetch_saism_latency(),
     )
 
     sem = asyncio.Semaphore(3)
