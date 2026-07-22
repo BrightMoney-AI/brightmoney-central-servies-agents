@@ -154,7 +154,11 @@ class VMClient:
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             headers=self._headers,
-            timeout=10.0,
+            # 30 s per request.  Some PromQL queries (e.g. histogram_quantile
+            # with "offset 24h") are expensive historical scans that regularly
+            # take 10–20 s under VM load — the old 10 s timeout caused silent
+            # failures logged as empty-message asyncio.TimeoutError.
+            timeout=30.0,
         )
         return self
 

@@ -66,7 +66,7 @@ async def _fetch_onboarding_provider_sessions() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_ONBOARDING_PROVIDER_SESSIONS)
     except Exception as exc:
-        log.error("Onboarding provider sessions query failed: %s", exc)
+        log.error("Onboarding provider sessions query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
 
     if not rows:
@@ -114,7 +114,7 @@ async def _fetch_account_linking_by_source() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_ACCOUNT_LINKING_BY_SOURCE)
     except Exception as exc:
-        log.error("Account linking by source query failed: %s", exc)
+        log.error("Account linking by source query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
 
     if not rows:
@@ -157,7 +157,7 @@ async def _fetch_plaid_batch_recency() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PLAID_BATCH_RECENCY)
     except Exception as exc:
-        log.error("Plaid batch recency query failed: %s", exc)
+        log.error("Plaid batch recency query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         return []
@@ -191,7 +191,7 @@ async def _fetch_plaid_batch_metadata_recency() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PLAID_BATCH_METADATA_RECENCY)
     except Exception as exc:
-        log.error("Plaid batch metadata recency query failed: %s", exc)
+        log.error("Plaid batch metadata recency query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows or rows[0].get("recency_hrs") is None:
         return []
@@ -216,7 +216,7 @@ async def _fetch_plaid_batch_historical_recency() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PLAID_BATCH_HISTORICAL_RECENCY)
     except Exception as exc:
-        log.error("Plaid batch historical recency query failed: %s", exc)
+        log.error("Plaid batch historical recency query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         return []
@@ -286,7 +286,7 @@ async def _fetch_plaid_batch_refresh_errors() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PLAID_BATCH_REFRESH_ERRORS)
     except Exception as exc:
-        log.error("Plaid batch refresh errors query failed: %s", exc)
+        log.error("Plaid batch refresh errors query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         return []
@@ -317,7 +317,7 @@ async def _fetch_plaid_batch_trend() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PLAID_BATCH_TREND)
     except Exception as exc:
-        log.error("Plaid batch trend query failed: %s", exc)
+        log.error("Plaid batch trend query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         return []
@@ -345,7 +345,7 @@ async def _fetch_plaid_force_refresh_daily() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PLAID_FORCE_REFRESH_DAILY)
     except Exception as exc:
-        log.error("Plaid force refresh daily metrics query failed: %s", exc)
+        log.error("Plaid force refresh daily metrics query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         return []
@@ -379,7 +379,7 @@ async def _fetch_plaid_force_refresh_errors() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PLAID_FORCE_REFRESH_ERRORS)
     except Exception as exc:
-        log.error("Plaid force refresh errors query failed: %s", exc)
+        log.error("Plaid force refresh errors query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         return []
@@ -410,7 +410,7 @@ async def _fetch_plaid_force_refresh_trend() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PLAID_FORCE_REFRESH_TREND)
     except Exception as exc:
-        log.error("Plaid force refresh trend query failed: %s", exc)
+        log.error("Plaid force refresh trend query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         return []
@@ -468,7 +468,7 @@ async def _fetch_alsm_latency() -> list[BusinessMetric]:
                 ]
             results = await asyncio.gather(*queries)
     except Exception as exc:
-        log.error("ALSM latency query failed: %s", exc)
+        log.error("ALSM latency query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
 
     details    = ["Aggregator|P50|P99|Yesterday P99|Change"]
@@ -539,7 +539,7 @@ async def _fetch_saism_latency() -> list[BusinessMetric]:
                 ]
             results = await asyncio.gather(*queries)
     except Exception as exc:
-        log.error("SAISM latency query failed: %s", exc)
+        log.error("SAISM latency query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
 
     details  = ["Aggregator|P50|P99|Yesterday P99|Change"]
@@ -588,7 +588,7 @@ async def _fetch_partner_costs() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_PARTNER_COSTS)
     except Exception as exc:
-        log.error("Partner cost breakdown query failed: %s", exc)
+        log.error("Partner cost breakdown query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         log.info("Partner costs: no data available in cost_cube.")
@@ -632,7 +632,7 @@ async def _fetch_txn_quality_metrics() -> list[BusinessMetric]:
     try:
         rows = await execute_query(_TRINO_TXN_QUALITY_METRICS)
     except Exception as exc:
-        log.error("Txn quality metrics query failed: %s", exc)
+        log.error("Txn quality metrics query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
     if not rows:
         log.info("Txn quality metrics: no data returned.")
