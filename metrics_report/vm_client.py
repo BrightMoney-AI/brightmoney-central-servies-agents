@@ -154,11 +154,16 @@ class VMClient:
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             headers=self._headers,
-            # 30 s per request.  Some PromQL queries (e.g. histogram_quantile
-            # with "offset 24h") are expensive historical scans that regularly
-            # take 10–20 s under VM load — the old 10 s timeout caused silent
-            # failures logged as empty-message asyncio.TimeoutError.
-            timeout=30.0,
+            # Granular timeout:
+            #   connect=5s  — fast fail if VM refuses new TCP connections
+            #                 (ALSM/SAISM were hitting ConnectTimeout at 30s
+            #                  because VM was overloaded when they opened their
+            #                  own independent httpx.AsyncClient late in the run)
+            #   read=30s    — allow expensive PromQL (histogram_quantile + offset 24h)
+            #                 that regularly takes 10–20 s under VM load
+            #   write=10s   — generous for query param encoding
+            #   pool=5s     — fast fail on connection pool exhaustion
+            timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0),
         )
         return self
 

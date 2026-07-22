@@ -410,12 +410,20 @@ async def run_hl_report() -> None:
         from .central_business_collector import collect_business_metrics
         central_biz_metrics = await collect_business_metrics(vm)
 
+        # ALSM/SAISM latency — must run inside this VMClient context so they
+        # reuse the already-open TCP connection pool instead of opening new
+        # independent connections to a potentially loaded VM server.
+        from .uaa_business_collector import collect_uaa_vm_metrics
+        uaa_vm_metrics = await collect_uaa_vm_metrics(vm)
+
     from .uaa_business_collector import collect_uaa_business_metrics
     from .uaa_kafka_collector import collect_ti_kafka_metrics
-    uaa_biz_metrics, ti_kafka_metrics = await asyncio.gather(
+    uaa_biz_trino, ti_kafka_metrics = await asyncio.gather(
         collect_uaa_business_metrics(),
         collect_ti_kafka_metrics(),
     )
+    # Merge VM metrics (ALSM/SAISM) with Trino metrics
+    uaa_biz_metrics = uaa_vm_metrics + uaa_biz_trino
 
     from .dp_business_collector import collect_dp_business_metrics
     dp_biz_metrics = await collect_dp_business_metrics()
@@ -601,6 +609,12 @@ async def run_l0_manager_only() -> None:
                 dp_l0_svc.kafka_sinks or None,
             )
 
+        # ALSM/SAISM latency — must run inside this VMClient context so they
+        # reuse the already-open TCP connection pool instead of opening new
+        # independent connections to a potentially loaded VM server.
+        from .uaa_business_collector import collect_uaa_vm_metrics
+        uaa_vm_metrics = await collect_uaa_vm_metrics(vm)
+
     # Out-of-VM collectors (Trino-based)
     from .uaa_business_collector import collect_uaa_business_metrics
     from .uaa_kafka_collector import collect_ti_kafka_metrics
@@ -608,7 +622,7 @@ async def run_l0_manager_only() -> None:
     from .emr_collector import collect_emr_metrics
 
     (
-        uaa_biz_metrics,
+        uaa_biz_trino,
         ti_kafka_metrics,
         dp_biz_metrics,
         emr_report,
@@ -618,6 +632,8 @@ async def run_l0_manager_only() -> None:
         collect_dp_business_metrics(),
         collect_emr_metrics(),
     )
+    # Merge VM metrics (ALSM/SAISM) with Trino metrics
+    uaa_biz_metrics = uaa_vm_metrics + uaa_biz_trino
 
     # Airflow health (non-blocking — skip silently if not configured)
     _, airflow_db_result, view_flow_result = await asyncio.gather(

@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from .queries import load_uaa
 from .trino_client import execute_query
 from .vm_client import VMClient
-from .config import settings
 
 log = logging.getLogger(__name__)
 
@@ -447,26 +446,31 @@ def _alsm_latency_promql(aggregator: str, quantile: str = "0.99") -> str:
     )
 
 
-async def _fetch_alsm_latency() -> list[BusinessMetric]:
+async def _fetch_alsm_latency(vm: VMClient) -> list[BusinessMetric]:
+    """Fetch ALSM latency metrics using the caller-supplied VMClient.
+
+    Accepts a shared VMClient so it can reuse an existing TCP connection pool
+    (see collect_uaa_vm_metrics).  No longer creates its own httpx.AsyncClient,
+    which was causing ConnectTimeout when VM was loaded from earlier collectors.
+    """
     aggregators = ["PLAID", "DL_CAPITALONE"]
     # Per aggregator: [p50, p99_today, p99_yesterday]
     try:
-        async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
-            _sem = asyncio.Semaphore(4)
+        _sem = asyncio.Semaphore(4)
 
-            async def _lim(coro):
-                async with _sem:
-                    return await coro
+        async def _lim(coro):
+            async with _sem:
+                return await coro
 
-            queries = []
-            for agg in aggregators:
-                q99 = _alsm_latency_promql(agg, "0.99")
-                queries += [
-                    _lim(vm.query(_alsm_latency_promql(agg, "0.5"))),
-                    _lim(vm.query(q99)),
-                    _lim(vm.query(f"{q99} offset 24h")),
-                ]
-            results = await asyncio.gather(*queries)
+        queries = []
+        for agg in aggregators:
+            q99 = _alsm_latency_promql(agg, "0.99")
+            queries += [
+                _lim(vm.query(_alsm_latency_promql(agg, "0.5"))),
+                _lim(vm.query(q99)),
+                _lim(vm.query(f"{q99} offset 24h")),
+            ]
+        results = await asyncio.gather(*queries)
     except Exception as exc:
         log.error("ALSM latency query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
@@ -519,25 +523,29 @@ def _saism_latency_promql(aggregator: str, quantile: str = "0.99") -> str:
     )
 
 
-async def _fetch_saism_latency() -> list[BusinessMetric]:
+async def _fetch_saism_latency(vm: VMClient) -> list[BusinessMetric]:
+    """Fetch SAISM latency metrics using the caller-supplied VMClient.
+
+    Accepts a shared VMClient so it can reuse an existing TCP connection pool
+    (see collect_uaa_vm_metrics).  No longer creates its own httpx.AsyncClient.
+    """
     aggregators = ["CRBAA", "BRIGHT"]
     try:
-        async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
-            _sem = asyncio.Semaphore(4)
+        _sem = asyncio.Semaphore(4)
 
-            async def _lim(coro):
-                async with _sem:
-                    return await coro
+        async def _lim(coro):
+            async with _sem:
+                return await coro
 
-            queries = []
-            for agg in aggregators:
-                q99 = _saism_latency_promql(agg, "0.99")
-                queries += [
-                    _lim(vm.query(_saism_latency_promql(agg, "0.5"))),
-                    _lim(vm.query(q99)),
-                    _lim(vm.query(f"{q99} offset 24h")),
-                ]
-            results = await asyncio.gather(*queries)
+        queries = []
+        for agg in aggregators:
+            q99 = _saism_latency_promql(agg, "0.99")
+            queries += [
+                _lim(vm.query(_saism_latency_promql(agg, "0.5"))),
+                _lim(vm.query(q99)),
+                _lim(vm.query(f"{q99} offset 24h")),
+            ]
+        results = await asyncio.gather(*queries)
     except Exception as exc:
         log.error("SAISM latency query failed [%s]: %s", type(exc).__name__, exc, exc_info=True)
         return []
@@ -659,20 +667,38 @@ async def _fetch_txn_quality_metrics() -> list[BusinessMetric]:
     )]
 
 
-# ── Public entry point ────────────────────────────────────────────────────────
+# ── Public entry points ───────────────────────────────────────────────────────
+
+async def collect_uaa_vm_metrics(vm: VMClient) -> list[BusinessMetric]:
+    """Collect UAA metrics that require VictoriaMetrics (ALSM + SAISM latency).
+
+    Called inside the shared `async with VMClient(...) as vm:` block in
+    hl_scheduler so that ALSM/SAISM reuse the already-open TCP connection pool
+    rather than opening fresh connections to an already-loaded VM server.
+    """
+    results = await asyncio.gather(
+        _fetch_alsm_latency(vm),
+        _fetch_saism_latency(vm),
+    )
+    metrics = [m for batch in results for m in batch]
+    log.info("UAA VM metrics collected: %d metric(s).", len(metrics))
+    return metrics
+
 
 async def collect_uaa_business_metrics() -> list[BusinessMetric]:
-    """Collect all UAA business metrics from Trino and VictoriaMetrics.
+    """Collect UAA business metrics from Trino (no VictoriaMetrics queries here).
 
-    Fast queries (HTTP + lightweight Trino) run fully concurrently.
+    VM-based metrics (ALSM/SAISM latency) are collected separately via
+    collect_uaa_vm_metrics(vm) which must be called inside a shared VMClient
+    context.  Call sites in hl_scheduler merge both results.
+
+    Fast queries (lightweight Trino) run fully concurrently.
     Plaid/heavy Trino queries run with a concurrency cap of 3 to avoid
     saturating the Trino queue (which triggers 15s–45s retry backoff).
     """
     fast = await asyncio.gather(
         _fetch_onboarding_provider_sessions(),
         _fetch_account_linking_by_source(),
-        _fetch_alsm_latency(),
-        _fetch_saism_latency(),
     )
 
     sem = asyncio.Semaphore(3)
