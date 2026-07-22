@@ -823,11 +823,15 @@ def _render_l1_dp(
                 lines.append(f"| `{v.vm_name}` | {v.disk_pct:.1f}% | {icon} |")
             lines.append("")
 
-    # CDC per-sink detail
+    # CDC per-sink detail — show only flagged (🔴/🟡) and unknown (⚪) sinks;
+    # collapse healthy (🟢) to a single summary line to keep the canvas compact.
     if dp_l0 and dp_l0.sinks:
-        lines += ["### CDC Sinks — Per Sink Detail", ""]
-        lines += ["| Sink | Coord Lag | Offset Lag | Lag Δ 24h | Heartbeat | Status |", "|---|---|---|---|---|---|"]
-        for s in sorted(dp_l0.sinks, key=lambda x: x.sink):
+        all_cdc = list(dp_l0.sinks) + list(getattr(dp_l0, "kafka_sinks", []))
+        flagged_sinks  = [s for s in all_cdc if getattr(s, "status", "ok") in ("critical", "warning")]
+        unknown_sinks  = [s for s in all_cdc if getattr(s, "status", "ok") == "unknown"]
+        healthy_sinks  = [s for s in all_cdc if getattr(s, "status", "ok") == "ok"]
+
+        def _sink_row(s: Any) -> str:
             icon   = _sink_icon(s)
             coord  = f"{s.coord_lag:,.0f}" if s.coord_lag is not None else "—"
             if s.offset_lag is not None:
@@ -842,8 +846,21 @@ def _render_l1_dp(
             else:
                 delta = "—"
             hb = f"{s.heartbeat_rate:.1f}" if s.heartbeat_rate is not None else "—"
-            lines.append(f"| `{_short_sink(s.sink)}` | {coord} | {offset} | {delta} | {hb} msg/5m | {icon} |")
-        lines.append("")
+            return f"| `{_short_sink(s.sink)}` | {coord} | {offset} | {delta} | {hb} msg/5m | {icon} |"
+
+        if flagged_sinks or unknown_sinks:
+            lines += ["### CDC Sinks — Flagged & Unknown", ""]
+            lines += ["| Sink | Coord Lag | Offset Lag | Lag Δ 24h | Heartbeat | Status |", "|---|---|---|---|---|---|"]
+            # Critical first, then warning, then unknown — sorted by name within each group
+            for s in sorted(flagged_sinks, key=lambda x: (0 if getattr(x, "status", "") == "critical" else 1, x.sink)):
+                lines.append(_sink_row(s))
+            for s in sorted(unknown_sinks, key=lambda x: x.sink):
+                lines.append(_sink_row(s))
+            lines.append("")
+
+        if healthy_sinks:
+            lines.append(f"_🟢 {len(healthy_sinks)} CDC sink(s) healthy — all within normal lag range_")
+            lines.append("")
 
     # Kafka Connect connector health
     if connector_health and connector_health.instances:
@@ -1045,26 +1062,58 @@ def _render_l2_dp(dp_biz: Optional[list[Any]], emr: Any) -> list[str]:
                     lines.append("")
 
     # ── EMR cube full tables — always rendered for DP (per design doc) ─────────
-    # Sections per design doc:
-    #   Cube Health Overview, Staleness, Memory Top 10, Execution Time, Schedule Delay
-    #   (CPU and Row Growth also rendered if present)
+    #
+    # Row caps per section keep the canvas under the Slack 80k-char limit.
+    # "Staleness (ordered by staleness_hrs)" is intentionally dropped — its
+    # Cube, Last Run, Recency, Staleness(h) columns are a strict subset of what
+    # Cube Health Overview already shows, sorted differently but with no unique
+    # signal.  The 17k chars it saves are more valuable than the re-sort.
+    _EMR_SKIP_TITLES   = {"staleness (ordered by staleness_hrs)"}
+    _EMR_ROW_CAPS: dict[str, int] = {
+        # title substring (lower-case) → max rows shown
+        "cube health overview":            50,   # 244 rows → 50 (breach/age sorted, worst first)
+        "cpu utilisation":                 30,   # 170 rows → 30 (sorted ASC = low util first, less urgent)
+        "schedule delay":                  50,   # 230 rows → 50 (sorted DESC = most delayed first)
+        "row growth":                      30,   # 50 rows  → 30
+        "execution time":                  50,   # sorted by P95 DESC, keep top 50
+    }
+    _DEFAULT_ROW_CAP = 50
+
     if emr and emr.sections:
         for section in emr.sections:
+            title_lc = section.title.lower()
+
+            # Skip redundant sections
+            if title_lc in _EMR_SKIP_TITLES:
+                continue
+
             if section.failed or not section.headers:
-                # Still emit a note so the reader knows the query failed
                 lines += [f"### EMR — {section.title}", "", "_⚠️ Query failed — no data_", ""]
                 continue
             if not section.rows:
                 lines += [f"### EMR — {section.title}", "", "_No rows returned_", ""]
                 continue
+
+            # Apply row cap
+            cap = _DEFAULT_ROW_CAP
+            for key, limit in _EMR_ROW_CAPS.items():
+                if key in title_lc:
+                    cap = limit
+                    break
+
+            rows_to_show = section.rows[:cap]
+            omitted      = len(section.rows) - len(rows_to_show)
+
             lines += [f"### EMR — {section.title}", ""]
             lines += [
                 "| " + " | ".join(section.headers) + " |",
                 "|" + "|".join("---" for _ in section.headers) + "|",
             ]
-            for row in section.rows:
+            for row in rows_to_show:
                 flag_marker = " 🔴" if row.flagged else ""
                 lines.append("| " + " | ".join(row.cells) + f" |{flag_marker}")
+            if omitted:
+                lines.append(f"_+{omitted} more rows (showing top {cap} by sort order)_")
             lines.append("")
 
     return lines
