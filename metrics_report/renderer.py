@@ -23,17 +23,21 @@ def _metric_status(value: float, thresholds: FlaggingThresholds) -> Status:
 
 
 def _endpoint_is_flagged(ep: Endpoint, t: FlaggingThresholds) -> bool:
-    # Success rate: flag only if it's a spike down vs baseline, not if it's always been low
+    # Success rate: flag on a spike down vs baseline, OR whenever the absolute
+    # success rate is below the warn floor (an always-low endpoint is still bad).
     if ep.success_baseline_pct is not None:
         if ep.success_baseline_pct - ep.success_pct >= 5.0:
             return True
-    elif ep.success_pct < t.success_warn_pct:
+    if ep.success_pct < t.success_warn_pct:
         return True
     # p99 latency: flag only if it's a spike vs baseline
     if ep.p99_baseline_ms and ep.p99_baseline_ms > 0:
         if ep.p99_ms / ep.p99_baseline_ms >= 1.5:
             return True
     elif ep.p99_ms >= t.p99_warn_ms:
+        return True
+    # Any hard errors on the endpoint are always worth surfacing.
+    if ep.errors is not None and ep.errors > 0:
         return True
     return False
 

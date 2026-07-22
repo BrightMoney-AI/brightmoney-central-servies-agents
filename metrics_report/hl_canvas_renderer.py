@@ -11,6 +11,7 @@ Consumed by hl_scheduler.py.  Existing canvas_renderer.py is unchanged.
 from __future__ import annotations
 
 import logging
+import math
 from collections import defaultdict
 from typing import Any, Optional
 
@@ -45,51 +46,29 @@ def _strip_status_emoji(text: str) -> str:
     return t
 
 
-# ── Sparkline helper ─────────────────────────────────────────────────────────
-# Unicode block ticks; renders a mini in-line chart from a numeric series.
-# Reusable for a full 30-min bucket series once plumbed through the collector;
-# today we render the 2-point baseline→current micro-trend.
-
-_SPARK_TICKS = "▁▂▃▄▅▆▇█"
-
-
-def _sparkline(values: list[Optional[float]]) -> str:
-    vals = [float(v) for v in values if v is not None]
-    if len(vals) < 2:
-        return ""
-    lo, hi = min(vals), max(vals)
-    if hi - lo < 1e-9:
-        return _SPARK_TICKS[3] * len(vals)
-    span = hi - lo
-    out = []
-    for v in vals:
-        idx = int((v - lo) / span * (len(_SPARK_TICKS) - 1))
-        out.append(_SPARK_TICKS[idx])
-    return "".join(out)
-
-
-def _mini_trend(baseline: Optional[float], current: Optional[float]) -> str:
-    """2-point baseline→current spark. Returns '—' when there's no baseline to compare."""
-    if baseline is None or current is None:
-        return "—"
-    return _sparkline([baseline, current]) or "—"
-
-
 # ── Trend helpers ──────────────────────────────────────────────────────────────
+
+_ICON_RANK = {"🟢": 0, "🟡": 1, "🔴": 2, "⚪": -1}
+
+
+def _worst_icon(a: str, b: str) -> str:
+    """Return the more severe of two status icons (🔴 > 🟡 > 🟢)."""
+    return a if _ICON_RANK.get(a, 0) >= _ICON_RANK.get(b, 0) else b
+
 
 def _latency_trend(current: Optional[float], baseline: Optional[float]) -> tuple[str, str]:
     """Return (display_str, status_icon) for P50 latency."""
     if current is None:
         return "—", "⚪"
     cur = float(current)
+    abs_icon = "🔴" if cur >= 1000 else ("🟡" if cur >= 500 else "🟢")
     if baseline is None or baseline <= 0:
-        icon = "🔴" if cur >= 1000 else ("🟡" if cur >= 500 else "🟢")
-        return _fmt_p99(cur), icon
+        return _fmt_p99(cur), abs_icon
     ratio = cur / float(baseline)
     pct   = (ratio - 1) * 100
-    icon  = "🔴" if ratio >= 2.0 else ("🟡" if ratio >= 1.5 else "🟢")
+    chg_icon = "🔴" if ratio >= 2.0 else ("🟡" if ratio >= 1.5 else "🟢")
     sign  = "▲" if pct > 0 else "▼"
-    return f"{_fmt_p99(cur)} {sign} {abs(pct):.0f}% vs 7d avg", icon
+    return f"{_fmt_p99(cur)} {sign} {abs(pct):.0f}% vs 7d avg", _worst_icon(abs_icon, chg_icon)
 
 
 def _success_trend(current: Optional[float], baseline: Optional[float]) -> tuple[str, str]:
@@ -97,13 +76,13 @@ def _success_trend(current: Optional[float], baseline: Optional[float]) -> tuple
     if current is None:
         return "—", "⚪"
     cur = float(current)
+    abs_icon = "🔴" if cur < 95 else ("🟡" if cur < 99 else "🟢")
     if baseline is None:
-        icon = "🔴" if cur < 95 else ("🟡" if cur < 99 else "🟢")
-        return f"{cur:.1f}%", icon
+        return f"{cur:.1f}%", abs_icon
     drop = float(baseline) - cur
-    icon = "🔴" if drop >= 10.0 else ("🟡" if drop >= 5.0 else "🟢")
+    chg_icon = "🔴" if drop >= 10.0 else ("🟡" if drop >= 5.0 else "🟢")
     sign = "▼" if drop > 0 else "▲"
-    return f"{cur:.1f}% {sign} {abs(drop):.1f} pp vs 7d avg", icon
+    return f"{cur:.1f}% {sign} {abs(drop):.1f} pp vs 7d avg", _worst_icon(abs_icon, chg_icon)
 
 
 def _error_trend(current: Optional[float], baseline: Optional[float]) -> tuple[str, str]:
@@ -111,13 +90,13 @@ def _error_trend(current: Optional[float], baseline: Optional[float]) -> tuple[s
     if current is None:
         return "—", "⚪"
     cur = float(current)
+    abs_icon = "🔴" if cur >= 5.0 else ("🟡" if cur >= 1.0 else "🟢")
     if baseline is None or baseline < 0.5:
-        icon = "🔴" if cur >= 5.0 else ("🟡" if cur >= 1.0 else "🟢")
-        return f"{cur:.2f}%", icon
+        return f"{cur:.2f}%", abs_icon
     ratio = cur / float(baseline)
-    icon  = "🔴" if ratio >= 3.0 else ("🟡" if ratio >= 2.0 else "🟢")
+    chg_icon = "🔴" if ratio >= 3.0 else ("🟡" if ratio >= 2.0 else "🟢")
     sign  = "▲" if cur > float(baseline) else "▼"
-    return f"{cur:.2f}% ({sign} {ratio:.1f}× vs 7d avg)", icon
+    return f"{cur:.2f}% ({sign} {ratio:.1f}× vs 7d avg)", _worst_icon(abs_icon, chg_icon)
 
 
 # ── CDC sink helpers (avoids private import from dp_l0_renderer) ───────────────
@@ -165,36 +144,56 @@ def _table_from_metric(m: Any) -> list[str]:
 
 # ── Attention Required ─────────────────────────────────────────────────────────
 
-def _render_scorecard(reports: list[tuple[str, L0Report]]) -> str:
-    """One-line health + aggregate-metric strip shown at the very top of the canvas."""
-    total  = len(reports)
-    n_crit = sum(1 for _, r in reports if r.status == Status.CRITICAL)
-    n_warn = sum(1 for _, r in reports if r.status == Status.WARNING)
-    n_ok   = sum(1 for _, r in reports if r.status == Status.HEALTHY)
+def _render_scorecard(
+    reports: list[tuple[str, L0Report]],
+    flags: list[tuple[int, str]],
+) -> str:
+    """One-line health + aggregate-metric strip shown at the very top of the canvas.
 
-    parts = [f"🟢 {n_ok}/{total} healthy"]
-    if n_warn:
-        parts.append(f"🟡 {n_warn}")
-    if n_crit:
-        parts.append(f"🔴 {n_crit}")
-    line = " · ".join(parts)
+    Overall status is the worst of *both* service-level status and the flags
+    surfaced across L0/L1/L2 (queue depth, disk, endpoints, …), so the headline
+    never claims "all healthy" while the Attention section lists criticals.
+    """
+    total = len(reports)
 
+    n_crit_flags = sum(1 for sev, _ in flags if sev == 0)
+    n_warn_flags = sum(1 for sev, _ in flags if sev >= 1)
+    svc_crit     = sum(1 for _, r in reports if r.status == Status.CRITICAL)
+    svc_warn     = sum(1 for _, r in reports if r.status == Status.WARNING)
+
+    has_crit = n_crit_flags > 0 or svc_crit > 0
+    has_warn = n_warn_flags > 0 or svc_warn > 0
+
+    if has_crit:
+        emoji, label = "🔴", "Action Required"
+    elif has_warn:
+        emoji, label = "🟡", "Degraded"
+    else:
+        emoji, label = "🟢", "All Systems Healthy"
+
+    head = f"{emoji} **{label}**"
+    attn = []
+    if n_crit_flags:
+        attn.append(f"🔴 {n_crit_flags} critical")
+    if n_warn_flags:
+        attn.append(f"🟡 {n_warn_flags} warning")
+    if attn:
+        head += "  ·  " + " · ".join(attn)
+
+    bits = [f"{total} service(s)"]
     api = [r.api for _, r in reports if r.show_api_metrics and r.api]
     if api:
         succ = [a.success_rate_pct   for a in api if a.success_rate_pct   is not None]
         p50s = [a.avg_latency_p50_ms  for a in api if a.avg_latency_p50_ms is not None]
         errs = [a.error_rate_pct      for a in api if a.error_rate_pct     is not None]
-        bits = []
         if succ:
             bits.append(f"Success {sum(succ) / len(succ):.1f}%")
         if p50s:
             bits.append(f"P50 {sum(p50s) / len(p50s):.0f}ms")
         if errs:
             bits.append(f"Err {sum(errs) / len(errs):.2f}%")
-        if bits:
-            line += "   |   " + " · ".join(bits)
 
-    return line
+    return head + "   |   " + " · ".join(bits)
 
 
 def _render_attention(flags: list[tuple[int, str]]) -> str:
@@ -234,41 +233,38 @@ def _render_l0_service(
     label = report.status.value.upper()
     lines: list[str] = [f"### {svc_name} — {emoji} {label}", ""]
 
-    # (metric, value-with-inline-icon, 7d-spark)
-    rows: list[tuple[str, str, str]] = []
+    # (metric, value-with-inline-icon)
+    rows: list[tuple[str, str]] = []
 
     sys      = report.system
     total    = len(sys.servers)
     srv_icon = "🔴" if sys.down > 0 else "🟢"
     if sys.down > 0:
         flags.append((0, f"🔴 {svc_name} · L0 · Servers · {sys.online}/{total} online ({sys.down} down)"))
-    rows.append(("Servers", f"{srv_icon} {sys.online} / {total} online", "—"))
+    rows.append(("Servers", f"{srv_icon} {sys.online} / {total} online"))
 
     if report.show_api_metrics:
         a = report.api
 
         suc_str, suc_icon = _success_trend(a.success_rate_pct, a.success_rate_baseline_pct)
-        rows.append(("Success Rate", f"{suc_icon} {suc_str}",
-                     _mini_trend(a.success_rate_baseline_pct, a.success_rate_pct)))
+        rows.append(("Success Rate", f"{suc_icon} {suc_str}"))
         if suc_icon in ("🟡", "🔴"):
             flags.append((0 if suc_icon == "🔴" else 1, f"{suc_icon} {svc_name} · L0 · Success Rate · {suc_str}"))
 
         err_str, err_icon = _error_trend(a.error_rate_pct, a.error_rate_baseline_pct)
-        rows.append(("Error Rate", f"{err_icon} {err_str}",
-                     _mini_trend(a.error_rate_baseline_pct, a.error_rate_pct)))
+        rows.append(("Error Rate", f"{err_icon} {err_str}"))
         if err_icon in ("🟡", "🔴"):
             flags.append((0 if err_icon == "🔴" else 1, f"{err_icon} {svc_name} · L0 · Error Rate · {err_str}"))
 
         lat_str, lat_icon = _latency_trend(a.avg_latency_p50_ms, a.avg_latency_baseline_ms)
-        rows.append(("Latency P50", f"{lat_icon} {lat_str}",
-                     _mini_trend(a.avg_latency_baseline_ms, a.avg_latency_p50_ms)))
+        rows.append(("Latency P50", f"{lat_icon} {lat_str}"))
         if lat_icon in ("🟡", "🔴"):
             flags.append((0 if lat_icon == "🔴" else 1, f"{lat_icon} {svc_name} · L0 · Latency P50 · {lat_str}"))
 
-    lines.append("| Metric | Value | 7d |")
-    lines.append("|---|---|---|")
-    for metric, value, spark in rows:
-        lines.append(f"| {metric} | {value} | {spark} |")
+    lines.append("| Metric | Value |")
+    lines.append("|---|---|")
+    for metric, value in rows:
+        lines.append(f"| {metric} | {value} |")
     lines.append("")
     return lines
 
@@ -981,6 +977,19 @@ def _render_l2_uaa(biz: list[Any]) -> list[str]:
     return lines
 
 
+def _fmt_business_value(m: Any) -> str:
+    """Human-format a BusinessMetric value by its type; guard against inf/nan."""
+    v = getattr(m, "value", None)
+    if v is None or not math.isfinite(v):
+        return "—"
+    mtype = getattr(m, "metric_type", "total_count")
+    if mtype == "success_rate":
+        return f"{v:.1f}%"
+    if mtype in ("failure_count", "total_count"):
+        return f"{int(round(v)):,}"
+    return f"{v:,.2f}"
+
+
 def _render_l2_central(central_biz: list[Any]) -> list[str]:
     if not central_biz:
         return []
@@ -992,7 +1001,7 @@ def _render_l2_central(central_biz: list[Any]) -> list[str]:
     for section, items in sorted(by_sec.items()):
         lines += [f"### {section}", "", "| Metric | Value |", "|---|---|"]
         for m in items:
-            lines.append(f"| {m.display_name} | {m.value} |")
+            lines.append(f"| {m.display_name} | {_fmt_business_value(m)} |")
         lines.append("")
     return lines
 
@@ -1166,12 +1175,13 @@ def render_hl_canvas(
 
     l2 = _render_l2(group_name, uaa_biz_metrics, central_biz_metrics, dp_biz_metrics, emr_report)
 
-    scorecard = _render_scorecard(reports)
+    scorecard = _render_scorecard(reports, flags)
     attn      = _render_attention(flags)
 
-    header = f"# {title}\n\n" if title else ""
-    if scorecard:
-        header += f"{scorecard}\n\n"
+    # NB: the canvas already carries `title` as its native document title
+    # (set in hl_scheduler via canvases.create), so we deliberately do NOT
+    # re-emit it as a markdown H1 here — that produced a duplicate heading.
+    header = f"{scorecard}\n\n" if scorecard else ""
 
     parts = [attn, "", "---", "", l0]
     if l1:
@@ -1181,7 +1191,7 @@ def render_hl_canvas(
     parts += [
         "", "---", "",
         "🟢 Healthy   🟡 Warning   🔴 Critical   ·   "
-        "▲/▼ = change vs baseline (icon shows good/bad, not arrow direction)   ·   "
+        "▲/▼ = change vs 7d avg (icon shows good/bad, not arrow direction)   ·   "
         "L0: scan daily · L1: drill on flags · L2: root cause   ·   "
         "brightmoney observability",
     ]
