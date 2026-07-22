@@ -10,6 +10,8 @@ from typing import Optional
 
 import httpx
 
+from .pagerduty import fire_alert
+
 log = logging.getLogger(__name__)
 
 _QUERY_PATH       = "/api/v1/query"
@@ -41,7 +43,12 @@ class VMClient:
             await self._client.aclose()
 
     async def _get_with_retry(self, path: str, params: dict) -> httpx.Response:
-        """GET with automatic retry on 429 (rate-limited) responses."""
+        """GET with automatic retry on 429 (rate-limited) responses.
+
+        Any non-2xx response (excluding mid-retry 429s) fires a PagerDuty alert.
+        The dedup_key collapses repeated failures for the same HTTP status code
+        into a single PD incident instead of an alert storm.
+        """
         assert self._client is not None, "VMClient must be used as async context manager"
         for attempt in range(_MAX_RETRIES + 1):
             resp = await self._client.get(path, params=params)
@@ -49,6 +56,23 @@ class VMClient:
                 log.debug("VictoriaMetrics 429 on attempt %d, retrying in %.1fs", attempt + 1, _RETRY_DELAY_S)
                 await asyncio.sleep(_RETRY_DELAY_S)
                 continue
+            if not resp.is_success:
+                # Fire PD alert then propagate the exception.
+                # create_task keeps the coroutine alive even after raise_for_status().
+                severity = "critical" if resp.status_code >= 500 else "warning"
+                asyncio.create_task(fire_alert(
+                    summary=f"VictoriaMetrics API non-200: HTTP {resp.status_code} on {path}",
+                    severity=severity,
+                    source=self._base_url + path,
+                    component="vm_client",
+                    details={
+                        "status_code": resp.status_code,
+                        "path": path,
+                        "attempt": attempt + 1,
+                        "body_preview": resp.text[:300],
+                    },
+                    dedup_key=f"vm-http-{resp.status_code}",
+                ))
             resp.raise_for_status()
             return resp
         resp.raise_for_status()  # final attempt already raised; satisfy type checker

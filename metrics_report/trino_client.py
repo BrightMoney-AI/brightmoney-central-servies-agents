@@ -19,6 +19,7 @@ from trino.dbapi import connect
 from trino.exceptions import TrinoConnectionError, TrinoQueryError
 
 from .config import settings
+from .pagerduty import fire_alert_sync
 
 log = logging.getLogger(__name__)
 
@@ -54,8 +55,25 @@ def _execute_sync(query: str, max_retries: int = 3, backoff_seconds: int = 15) -
                     log.warning("Trino queue full, retrying in %ds (attempt %d/%d)", wait, attempt + 1, max_retries)
                     time.sleep(wait)
                     continue
+                # All retries exhausted — fire PD then raise
+                fire_alert_sync(
+                    summary=f"Trino queue full after {max_retries} attempts — queries are being rejected",
+                    severity="critical",
+                    source=f"{settings.trino_host}:{settings.trino_port}",
+                    component="trino_client",
+                    details={"error": error[:500], "max_retries": max_retries},
+                    dedup_key="trino-queue-full",
+                )
                 raise RuntimeError(f"Trino query rejected after {max_retries} attempts: queue full") from e
             if "Access Denied" in error:
+                fire_alert_sync(
+                    summary=f"Trino access denied — check permissions for user '{settings.trino_user}'",
+                    severity="critical",
+                    source=f"{settings.trino_host}:{settings.trino_port}",
+                    component="trino_client",
+                    details={"error": error[:500], "user": settings.trino_user},
+                    dedup_key="trino-access-denied",
+                )
                 raise PermissionError("Trino access denied — check TRINO_USER permissions") from e
             raise
 
@@ -64,6 +82,15 @@ def _execute_sync(query: str, max_retries: int = 3, backoff_seconds: int = 15) -
                 log.warning("Trino connection error, retrying in %ds (attempt %d/%d)", backoff_seconds, attempt + 1, max_retries)
                 time.sleep(backoff_seconds)
                 continue
+            # All retries exhausted — fire PD then raise
+            fire_alert_sync(
+                summary=f"Cannot connect to Trino at {settings.trino_host}:{settings.trino_port} after {max_retries} attempts",
+                severity="critical",
+                source=f"{settings.trino_host}:{settings.trino_port}",
+                component="trino_client",
+                details={"error": str(e), "host": settings.trino_host, "port": settings.trino_port},
+                dedup_key="trino-connection-failure",
+            )
             raise RuntimeError(f"Cannot connect to Trino at {settings.trino_host}:{settings.trino_port}") from e
 
         finally:

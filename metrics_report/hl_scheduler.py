@@ -316,14 +316,15 @@ async def run_hl_report() -> None:
         is_cen = group_name == "Central Services"
         is_uks = group_name == "UKS Services"
 
-        # ── Data Platform: try-fit L2 in main canvas; split if it overflows ───
+        # ── Data Platform: L2 is ALWAYS posted as a separate canvas ──────────
+        # This keeps the main canvas focused on live health (L0/L1) and the
+        # L2 canvas as a dedicated deep-analysis document — regardless of size.
         if is_dp:
             l2_title    = f"Data Platform — L2 Deep Analysis — {date_str}"
             l2_markdown = render_dp_l2_canvas(
                 dp_biz_metrics, emr_report, title=l2_title, date_str=date_str
             )
 
-            # First attempt: render with L2 included
             markdown = render_hl_canvas(
                 group_name=group_name,
                 reports=collected,
@@ -333,44 +334,24 @@ async def run_hl_report() -> None:
                 emr_report=emr_report,
                 connector_health=connector_health,
                 airflow_health=airflow_health,
-                include_l2=True,
+                include_l2=False,
+                l2_canvas_note=(
+                    f"→ *L2 Deep Analysis* (base refresh failures, stale views, full EMR tables) "
+                    f"continues in the next canvas: *{l2_title}*"
+                ) if l2_markdown else "",
             )
 
-            # If combined canvas exceeds the limit, split L2 into its own canvas
-            if l2_markdown and len(markdown) > _MAX_CANVAS_CHARS:
-                log.info(
-                    "DP canvas oversized (%d chars) — splitting L2 into separate canvas.",
-                    len(markdown),
-                )
-                markdown = render_hl_canvas(
-                    group_name=group_name,
-                    reports=collected,
-                    title=canvas_title,
-                    dp_biz_metrics=dp_biz_metrics,
-                    dp_l0_report=dp_l0_report,
-                    emr_report=emr_report,
-                    connector_health=connector_health,
-                    airflow_health=airflow_health,
-                    include_l2=False,
-                    l2_canvas_note=(
-                        f"→ *L2 Deep Analysis* (validation failures, stale views, full EMR tables) "
-                        f"is posted as a separate canvas: *{l2_title}*"
-                    ),
-                )
-                summary_blocks = _hl_summary_blocks(collected, group_name)
-                await _publish_hl_canvas(markdown, summary_blocks, title=canvas_title)
-                log.info("HL canvas posted: %r (%d service(s)).", canvas_title, len(collected))
+            log.info("DP main canvas: %d chars (L2 excluded).", len(markdown))
+            summary_blocks = _hl_summary_blocks(collected, group_name)
+            await _publish_hl_canvas(markdown, summary_blocks, title=canvas_title)
+            log.info("HL canvas posted: %r (%d service(s)).", canvas_title, len(collected))
+
+            if l2_markdown:
                 await _publish_dp_l2_canvas(
                     l2_markdown, l2_title,
                     channel=settings.slack_hl_channel_id,
                     client=client,
                 )
-                continue
-
-            # L2 fits (or there was no L2 content) — post as one canvas
-            summary_blocks = _hl_summary_blocks(collected, group_name)
-            await _publish_hl_canvas(markdown, summary_blocks, title=canvas_title)
-            log.info("HL canvas posted: %r (%d service(s)).", canvas_title, len(collected))
             continue
 
         # ── Non-DP groups ──────────────────────────────────────────────────────

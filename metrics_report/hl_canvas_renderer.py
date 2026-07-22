@@ -831,6 +831,16 @@ def _render_l1_dp(
         unknown_sinks  = [s for s in all_cdc if getattr(s, "status", "ok") == "unknown"]
         healthy_sinks  = [s for s in all_cdc if getattr(s, "status", "ok") == "ok"]
 
+        # Split unknowns: those with any data signal vs truly all-null (no scrape at all)
+        unknown_with_data = [
+            s for s in unknown_sinks
+            if s.coord_lag is not None or s.offset_lag is not None or s.heartbeat_rate is not None
+        ]
+        unknown_no_data   = [
+            s for s in unknown_sinks
+            if s.coord_lag is None and s.offset_lag is None and s.heartbeat_rate is None
+        ]
+
         def _sink_row(s: Any) -> str:
             icon   = _sink_icon(s)
             coord  = f"{s.coord_lag:,.0f}" if s.coord_lag is not None else "—"
@@ -848,14 +858,21 @@ def _render_l1_dp(
             hb = f"{s.heartbeat_rate:.1f}" if s.heartbeat_rate is not None else "—"
             return f"| `{_short_sink(s.sink)}` | {coord} | {offset} | {delta} | {hb} msg/5m | {icon} |"
 
-        if flagged_sinks or unknown_sinks:
-            lines += ["### CDC Sinks — Flagged & Unknown", ""]
+        if flagged_sinks or unknown_with_data:
+            lines += ["### CDC Sinks — Flagged & Partial Signal", ""]
             lines += ["| Sink | Coord Lag | Offset Lag | Lag Δ 24h | Heartbeat | Status |", "|---|---|---|---|---|---|"]
-            # Critical first, then warning, then unknown — sorted by name within each group
+            # Critical first, then warning, then unknowns with partial data — sorted by name
             for s in sorted(flagged_sinks, key=lambda x: (0 if getattr(x, "status", "") == "critical" else 1, x.sink)):
                 lines.append(_sink_row(s))
-            for s in sorted(unknown_sinks, key=lambda x: x.sink):
+            for s in sorted(unknown_with_data, key=lambda x: x.sink):
                 lines.append(_sink_row(s))
+            lines.append("")
+
+        if unknown_no_data:
+            lines.append(
+                f"_⚪ {len(unknown_no_data)} sink(s) returning no signal — "
+                f"likely decommissioned or not yet scraped_"
+            )
             lines.append("")
 
         if healthy_sinks:
@@ -1043,22 +1060,44 @@ def _render_l2_dp(dp_biz: Optional[list[Any]], emr: Any) -> list[str]:
         for m in dp_biz:
             by_sec[m.section].append(m)
 
-        # Ordered per the doc: Validation → CDC Health → View Health → Compaction → Table Recency
+        # Ordered most-actionable first:
+        #   CDC Health first (base refresh failures are high-signal and distinct from L1)
+        #   then View Health / Compaction, then the noisier Validation bulk list.
+        #
+        # NOTE: "DBZ invalid / base not refreshed" from CDC Health is intentionally
+        # SKIPPED here — it is an exact duplicate of the "DBZ Invalid Tables" list
+        # already shown in L1.  Only "Base refresh overdue >60d" (a different metric)
+        # comes through from the CDC Health section.
         _DP_L2_SECTIONS = (
-            "Validation",    # offset mismatch, full validation needed, stale validation
-            "CDC Health",    # DBZ invalid / base not refreshed, base refresh overdue
+            "CDC Health",    # base refresh overdue >60d  (DBZ invalid skipped — shown in L1)
             "View Health",   # views not updated >60d
             "Compaction",    # file growth >300 in 3d
-            "Table Recency", # stale / null CDC tables (shown here when > 0)
+            "Validation",    # offset mismatch, full validation needed (bulk/noisy — last)
+            "Table Recency", # stale / null CDC tables
         )
         for section_name in _DP_L2_SECTIONS:
             for m in by_sec.get(section_name, []):
                 if m.metric_type == "failure_count" and m.value > 0 and m.details:
+                    # Skip DBZ-invalid entries from CDC Health — L1 already lists them
+                    # under "DBZ Invalid Tables", so repeating here is pure noise.
+                    if section_name == "CDC Health" and (
+                        "dbz" in m.display_name.lower()
+                        or "invalid" in m.display_name.lower()
+                    ):
+                        continue
+
+                    # "Full validation needed" can run into hundreds of tables —
+                    # cap tightly (10) since the count is the signal, not the list.
+                    if "full validation" in m.display_name.lower():
+                        cap = 10
+                    else:
+                        cap = 30
+
                     lines += [f"### {m.display_name} ({int(m.value)} table(s))", ""]
-                    for item in m.details[:30]:
+                    for item in m.details[:cap]:
                         lines.append(f"- `{item}`")
-                    if len(m.details) > 30:
-                        lines.append(f"_+{len(m.details) - 30} more_")
+                    if len(m.details) > cap:
+                        lines.append(f"_+{len(m.details) - cap} more_")
                     lines.append("")
 
     # ── EMR cube full tables — always rendered for DP (per design doc) ─────────
@@ -1278,11 +1317,10 @@ def render_hl_canvas(
 
     if include_l2 and l2:
         parts += ["", "---", "", l2]
-    elif not include_l2:
+    elif not include_l2 and l2_canvas_note:
         # L2 is being posted as a separate canvas — add a signpost so readers
         # know it exists and where to look.
-        note = l2_canvas_note or "→ L2 Deep Analysis is available as a separate canvas posted below."
-        parts += ["", "---", "", f"> {note}"]
+        parts += ["", "---", "", f"> {l2_canvas_note}"]
 
     parts += [
         "", "---", "",
@@ -1317,17 +1355,27 @@ def render_dp_l2_canvas(
     if not content:
         return ""
 
-    header_parts = ["## L2 — Deep Analysis  ·  Data Platform"]
-    if date_str:
-        header_parts.append(f"_Root cause / historical context — {date_str}_")
-    else:
-        header_parts.append("_Root cause / historical context — drill when L1 doesn't fully explain_")
-    header_parts += ["", "---", ""]
+    ts = f" · {date_str}" if date_str else ""
+    header_parts = [
+        f"_↳ Continuation of **Data Platform — Health Overview**{ts}_",
+        "_Base refresh failures · Stale views · Compaction alerts · Full EMR analytics_",
+        "",
+        "> 📌 **How to read this canvas**",
+        "> ",
+        "> **CDC Health** — tables whose base hasn't been refreshed in >60 days (actionable backlog).",
+        "> **View Health** — views that haven't updated in >60 days (downstream staleness).",
+        "> **Compaction** — tables with rapid file growth needing compaction.",
+        "> **Validation** — count of tables awaiting offset validation (bulk list, low urgency).",
+        "> **EMR** — full analytics tables: cube health, CPU, schedule delay, row growth.",
+        "",
+        "---",
+        "",
+    ]
 
     footer = [
         "", "---", "",
         "_🟢 Healthy   🟡 Warning   🔴 Critical   ·   "
-        "Companion to the Data Platform — Health Overview canvas   ·   "
+        "↑ Companion to the Data Platform — Health Overview canvas   ·   "
         "brightmoney observability_",
     ]
 

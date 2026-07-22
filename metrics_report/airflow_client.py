@@ -16,6 +16,7 @@ import sqlalchemy
 from sqlalchemy import text
 
 from .models import AirflowDagRun, AirflowHealth, ViewFlowHealth, ViewFlowRun
+from .pagerduty import fire_alert
 
 log = logging.getLogger(__name__)
 
@@ -116,6 +117,20 @@ async def fetch_view_flow_health(
     try:
         async with httpx.AsyncClient(auth=(username, password), timeout=15.0) as client:
             resp = await client.get(url, params=params)
+            if not resp.is_success:
+                import asyncio as _asyncio
+                _asyncio.create_task(fire_alert(
+                    summary=f"Airflow REST API non-200: HTTP {resp.status_code} fetching view-flow DAG runs",
+                    severity="critical" if resp.status_code >= 500 else "warning",
+                    source=url,
+                    component="airflow_client",
+                    details={
+                        "status_code": resp.status_code,
+                        "url": url,
+                        "body_preview": resp.text[:300],
+                    },
+                    dedup_key=f"airflow-api-{resp.status_code}",
+                ))
             resp.raise_for_status()
             data = resp.json()
     except Exception as exc:

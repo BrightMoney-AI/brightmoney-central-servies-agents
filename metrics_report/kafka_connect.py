@@ -16,6 +16,7 @@ from typing import Optional
 import httpx
 
 from .models import ConnectorStatus, ConnectorTask, KafkaConnectHealth, KafkaConnectInstance
+from .pagerduty import fire_alert
 
 log = logging.getLogger(__name__)
 
@@ -30,10 +31,34 @@ async def _fetch_instance(
     url = base_url.rstrip("/")
     try:
         resp = await client.get(f"{url}/connectors", timeout=_TIMEOUT)
+        if not resp.is_success:
+            asyncio.create_task(fire_alert(
+                summary=f"Kafka Connect '{name}' returned HTTP {resp.status_code} — instance may be degraded",
+                severity="critical" if resp.status_code >= 500 else "warning",
+                source=f"{url}/connectors",
+                component="kafka_connect",
+                details={
+                    "instance": name,
+                    "url": url,
+                    "status_code": resp.status_code,
+                    "body_preview": resp.text[:300],
+                },
+                dedup_key=f"kafka-connect-{name.lower().replace(' ', '-')}-http-{resp.status_code}",
+            ))
         resp.raise_for_status()
         connector_names: list[str] = resp.json()
     except Exception as exc:
         log.error("Cannot reach Kafka Connect %s (%s): %s", name, url, exc)
+        # Network-level failure (connection refused, timeout) — fire PD for unreachable instance
+        if not isinstance(exc, httpx.HTTPStatusError):
+            asyncio.create_task(fire_alert(
+                summary=f"Kafka Connect '{name}' unreachable: {type(exc).__name__}: {exc}",
+                severity="critical",
+                source=url,
+                component="kafka_connect",
+                details={"instance": name, "url": url, "error": str(exc)},
+                dedup_key=f"kafka-connect-{name.lower().replace(' ', '-')}-unreachable",
+            ))
         return None
 
     unhealthy: list[ConnectorStatus] = []

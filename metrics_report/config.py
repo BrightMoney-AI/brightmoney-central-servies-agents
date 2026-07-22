@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     kafka_connect_cdc_sink_url: str = ""
     kafka_connect_debezium_url: str = ""
 
+    # PagerDuty Events API v2 routing key (empty = alerts disabled)
+    pagerduty_routing_key: str = ""
+
     @property
     def vm_base_url(self) -> str:
         base = self.vm_instance_entrypoint.rstrip("/")
