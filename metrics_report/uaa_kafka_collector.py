@@ -154,18 +154,20 @@ async def _collect(vm: VMClient) -> TIKafkaMetrics:
         # [4]  Enrichment service errors per minute
         vm.query("rate(publish_batch_to_enrichment_service_error[5m]) * 60"),
         # [5]  CDC API RR success %
-        # `default 100` — returns 100 % when no RR log events are scraped yet
-        # (metric absent or stale) rather than showing N/A in the canvas.
+        # NOTE: exported_job="TRANSACTION_INSIGHT" does NOT exist in VictoriaMetrics.
+        # PROD services with RR log metrics: CMS, CORE_PAYMENTS, CREDIT, NARADA, STRIPE,
+        # SUBSCRIPTION_MANAGEMENT.  TI is not yet instrumented for RR logs — these
+        # queries intentionally return None so the canvas shows N/A (no fake data).
         vm.query(
             'sum(service_api_rr_log_success{environment="prod", exported_job="TRANSACTION_INSIGHT"})'
             ' / sum(total_service_api_rr_log_requests{environment="prod", exported_job="TRANSACTION_INSIGHT"})'
-            ' * 100 default 100'
+            ' * 100'
         ),
         # [6]  CDC API RR logs vs total logs %
         vm.query(
             'sum(total_service_api_rr_log_requests{environment="prod", exported_job="TRANSACTION_INSIGHT"})'
             ' / sum(total_log_requests{environment="prod", exported_job="TRANSACTION_INSIGHT"})'
-            ' * 100 default 0'
+            ' * 100'
         ),
         # [7–9]  Consumer max lag per group
         *[
