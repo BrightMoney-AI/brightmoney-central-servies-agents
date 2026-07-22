@@ -14,7 +14,8 @@ class Settings(BaseSettings):
 
     slack_bot_token: str
     slack_channel_id: str
-    slack_hl_channel_id: str = ""   # new high-level ops channel; empty = disabled
+    slack_hl_channel_id: str = ""   # high-level ops channel (L0+L1+L2 per group); empty = disabled
+    slack_l0_channel_id: str = ""   # manager / senior-eng channel (L0 all-groups snapshot); empty = disabled
 
     # Thresholds for status icons
     cpu_warn_pct: float = 70.0

@@ -270,7 +270,16 @@ def _render_l0_service(
 
 
 def _render_l0_uaa_biz(biz: list[Any], flags: list[tuple[int, str]]) -> list[str]:
-    """UAA business trends table for L0."""
+    """UAA business trends table for L0.
+
+    Shows:
+    · Onboarding by provider — one row per provider (sessions + success rate + D-1 trend)
+    · Account Linkings — total with D-2 trend
+    · ALSM / SAISM P99 latency vs yesterday per aggregator
+    · Plaid Batch Success — 24h average AND latest 1h side-by-side
+      (SQL is ORDER BY metric_hour DESC → details[1] = newest, details[-1] = oldest;
+       previous code incorrectly read details[-1])
+    """
     if not biz:
         return []
 
@@ -280,32 +289,65 @@ def _render_l0_uaa_biz(biz: list[Any], flags: list[tuple[int, str]]) -> list[str
 
     rows: list[str] = []
 
-    # Onboarding sessions — sum D vs D-1 across providers
+    # ── Onboarding by provider — one row per provider ──────────────────────────
+    # Collector format: "PLAID|450|420 (93.3%)|430|410 (95.3%)"
+    #                    p[0]  p[1]   p[2]       p[3]   p[4]
     for m in by_sec.get("Onboarding", []):
         if m.metric_type == "provider_comparison" and m.details:
-            total_d = total_d1 = 0
-            for row in m.details:
-                parts = [p.strip() for p in row.split("|")]
-                if len(parts) >= 3:
+            for detail_row in m.details:
+                parts = [p.strip() for p in detail_row.split("|")]
+                if len(parts) < 2:
+                    continue
+                provider = parts[0]
+                if not provider or provider in ("", "—"):
+                    continue
+                try:
+                    d_sessions = int(parts[1]) if parts[1] not in ("", "—") else 0
+                except ValueError:
+                    d_sessions = 0
+
+                # Extract success % from "420 (93.3%)" → 93.3
+                d_pct: Optional[float] = None
+                if len(parts) > 2 and "(" in parts[2]:
                     try:
-                        total_d  += int(parts[1]) if parts[1] not in ("", "—") else 0
-                        total_d1 += int(parts[2]) if parts[2] not in ("", "—") else 0
-                    except ValueError:
+                        d_pct = float(parts[2].split("(")[1].rstrip("%)").strip())
+                    except (ValueError, IndexError):
                         pass
-            if total_d1 > 0:
-                pct   = (total_d - total_d1) / total_d1 * 100
-                trend = f"{'▲' if pct >= 0 else '▼'} {abs(pct):.1f}% vs D-1"
-            else:
-                trend = "—"
-            rows.append(f"| Onboarding Sessions | {total_d:,} | {trend} | — |")
+
+                try:
+                    d1_sessions = int(parts[3]) if len(parts) > 3 and parts[3] not in ("", "—") else 0
+                except ValueError:
+                    d1_sessions = 0
+
+                # Session count trend vs D-1
+                if d1_sessions > 0:
+                    chg   = (d_sessions - d1_sessions) / d1_sessions * 100
+                    trend = f"{'▲' if chg >= 0 else '▼'} {abs(chg):.1f}% vs D-1"
+                    # Flag significant session drops (>20 % → warn, >50 % → crit)
+                    icon  = "🔴" if chg <= -50 else ("🟡" if chg <= -20 else "🟢")
+                else:
+                    trend = "— no D-1 data"
+                    icon  = "⚪"
+
+                suc_str = f" · {d_pct:.1f}% succ" if d_pct is not None else ""
+
+                if icon in ("🟡", "🔴"):
+                    flags.append((
+                        0 if icon == "🔴" else 1,
+                        f"{icon} UAA · L0 · Onboarding ({provider}) · "
+                        f"{d_sessions:,} sessions{suc_str} · {trend}",
+                    ))
+                rows.append(
+                    f"| Onboarding · {provider} | {d_sessions:,}{suc_str} | {trend} | {icon} |"
+                )
             break
 
-    # Account linking — sum yesterday vs day-before
+    # ── Account linking — sum yesterday vs day-before ─────────────────────────
     for m in by_sec.get("Account Linking", []):
         if m.metric_type == "source_comparison" and m.details:
             total_y = total_d = 0
-            for row in m.details:
-                parts = [p.strip() for p in row.split("|")]
+            for detail_row in m.details:
+                parts = [p.strip() for p in detail_row.split("|")]
                 if len(parts) >= 4:
                     try:
                         total_y += int(parts[2]) if parts[2] not in ("", "—") else 0
@@ -320,7 +362,7 @@ def _render_l0_uaa_biz(biz: list[Any], flags: list[tuple[int, str]]) -> list[str
             rows.append(f"| Account Linkings (D-1) | {total_y:,} | {trend} | — |")
             break
 
-    # ALSM / SAISM P99 per aggregator vs yesterday
+    # ── ALSM / SAISM P99 per aggregator vs yesterday ──────────────────────────
     for section_lbl in ("ALSM", "SAISM"):
         for m in by_sec.get(section_lbl, []):
             if m.metric_type == "multi_col_table" and len(m.details) >= 2:
@@ -330,8 +372,8 @@ def _render_l0_uaa_biz(biz: list[Any], flags: list[tuple[int, str]]) -> list[str
                     p99_yest_idx  = next(i for i, h in enumerate(hdrs) if "p99" in h and "yesterday" in h)
                 except StopIteration:
                     continue
-                for row in m.details[1:]:
-                    parts = [p.strip() for p in row.split("|")]
+                for detail_row in m.details[1:]:
+                    parts = [p.strip() for p in detail_row.split("|")]
                     if len(parts) <= max(p99_today_idx, p99_yest_idx):
                         continue
                     aggregator = parts[0] if parts else "?"
@@ -348,25 +390,53 @@ def _render_l0_uaa_biz(biz: list[Any], flags: list[tuple[int, str]]) -> list[str
                     except (ValueError, IndexError):
                         pass
 
-    # Plaid batch success — latest hour
+    # ── Plaid Batch Success — 24h average + latest 1h ─────────────────────────
+    # SQL: ORDER BY metric_hour DESC → details[1] = most recent hour, details[-1] = oldest.
+    # Compute avg across all buckets; separately surface the latest-hour reading so
+    # an acute drop is visible even if the 24h avg is still healthy.
     for m in by_sec.get("Plaid Batch Refresh", []):
         if "hourly" in m.display_name.lower() and len(m.details) >= 2:
             hdrs = [h.strip().lower() for h in m.details[0].split("|")]
             try:
-                rate_idx = next(i for i, h in enumerate(hdrs) if "rate" in h)
+                rate_idx = next(i for i, h in enumerate(hdrs) if "success" in h)
             except StopIteration:
                 continue
-            parts = [p.strip() for p in m.details[-1].split("|")]
-            if len(parts) > rate_idx:
-                try:
-                    rate = float(parts[rate_idx])
-                    icon = "🔴" if rate < 90 else ("🟡" if rate < 95 else "🟢")
-                    if icon in ("🟡", "🔴"):
-                        sev = 0 if icon == "🔴" else 1
-                        flags.append((sev, f"{icon} UAA · L0 · Plaid Batch Success · {rate:.1f}% (latest hour)"))
-                    rows.append(f"| Plaid Batch Success | {rate:.1f}% | latest hour | {icon} |")
-                except ValueError:
-                    pass
+
+            success_vals: list[float] = []
+            for detail_row in m.details[1:]:          # skip header
+                parts = [p.strip().rstrip("%") for p in detail_row.split("|")]
+                if len(parts) > rate_idx:
+                    try:
+                        success_vals.append(float(parts[rate_idx]))
+                    except ValueError:
+                        pass
+
+            if not success_vals:
+                break
+
+            avg_success    = sum(success_vals) / len(success_vals)
+            latest_success = success_vals[0]           # DESC → index 0 = newest hour
+
+            icon_avg    = "🔴" if avg_success    < 90 else ("🟡" if avg_success    < 95 else "🟢")
+            icon_latest = "🔴" if latest_success < 90 else ("🟡" if latest_success < 95 else "🟢")
+
+            if icon_avg in ("🟡", "🔴"):
+                flags.append((
+                    0 if icon_avg == "🔴" else 1,
+                    f"{icon_avg} UAA · L0 · Plaid Batch Success · {avg_success:.1f}% (24h avg)",
+                ))
+            elif icon_latest in ("🟡", "🔴"):
+                # Avg healthy but latest hour degraded — surface as a warning
+                flags.append((
+                    0 if icon_latest == "🔴" else 1,
+                    f"{icon_latest} UAA · L0 · Plaid Batch Success · latest 1h {latest_success:.1f}% "
+                    f"(avg {avg_success:.1f}%)",
+                ))
+
+            trend_str = f"latest 1h: {icon_latest} {latest_success:.1f}%"
+            rows.append(
+                f"| Plaid Batch Success | {avg_success:.1f}% (24h avg) | {trend_str} | {icon_avg} |"
+            )
             break
 
     if not rows:
@@ -375,6 +445,114 @@ def _render_l0_uaa_biz(biz: list[Any], flags: list[tuple[int, str]]) -> list[str
     lines = ["### Business Trends — UAA", "", "| Metric | Current | Trend | Status |", "|---|---|---|---|"]
     lines += rows
     lines.append("")
+    return lines
+
+
+def _render_l0_ti_kafka(kafka: Any, flags: list[tuple[int, str]]) -> list[str]:
+    """Append Kafka rows to the UAA Business Trends table — only for flagged metrics.
+
+    Returns [] when nothing is out of bounds (keeps L0 noise-free).
+    Items are also appended to *flags* so they surface in the Attention section.
+    """
+    if kafka is None:
+        return []
+
+    flag_items = kafka._flag_items()
+    if not flag_items:
+        return []
+
+    rows: list[str] = []
+    for severity, desc in flag_items:
+        icon = "🔴" if severity == "crit" else "🟡"
+        flags.append((0 if icon == "🔴" else 1, f"{icon} UAA · L0 · Kafka TI · {desc}"))
+        rows.append(f"| Kafka TI · {desc} | — | — | {icon} |")
+
+    return rows
+
+
+def _render_l1_ti_kafka(kafka: Any) -> list[str]:
+    """Full Kafka / TI Pipeline section for L1 — always rendered regardless of flags."""
+    if kafka is None:
+        return []
+
+    lines: list[str] = ["### Kafka / TI Pipeline", ""]
+
+    # ── Producer Health ───────────────────────────────────────────────────────
+    lines += ["**Producer Health**", ""]
+    lines += ["| Metric | Value | Status |", "|---|---|---|"]
+
+    suc = kafka.producer_success_rate
+    if suc is not None:
+        suc_icon = "🔴" if suc < 95 else ("🟡" if suc < 99 else "🟢")
+        lines.append(f"| Producer Success Rate | {suc:.2f}% | {suc_icon} |")
+    else:
+        lines.append("| Producer Success Rate | N/A | ⚪ |")
+
+    pf_icon = "🟡" if kafka.pub_fail_per_min > 0 else "🟢"
+    lines.append(f"| Publishing Failures/min | {kafka.pub_fail_per_min:.2f} | {pf_icon} |")
+
+    af_icon = "🟡" if kafka.producer_ack_fail_1h > 0 else "🟢"
+    lines.append(f"| Producer ACK Failures (1h) | {kafka.producer_ack_fail_1h:.0f} | {af_icon} |")
+
+    pf1h_icon = "🟡" if kafka.publishing_fail_1h > 0 else "🟢"
+    lines.append(f"| Publishing Failures (1h) | {kafka.publishing_fail_1h:.0f} | {pf1h_icon} |")
+
+    ee_icon = "🟡" if kafka.enrichment_err_per_min > 0 else "🟢"
+    lines.append(f"| Enrichment Errors/min | {kafka.enrichment_err_per_min:.2f} | {ee_icon} |")
+    lines.append("")
+
+    # ── Consumer Lag ──────────────────────────────────────────────────────────
+    if kafka.consumer_max_lags:
+        lines += ["**Consumer Lag**", ""]
+        lines += ["| Group | Max Offset Lag | Sum Offset Lag | Status |", "|---|---|---|---|"]
+        lag_map = dict(kafka.consumer_max_lags)
+        sum_map = dict(kafka.consumer_sum_lags)
+        for label in [l for l, _ in kafka.consumer_max_lags]:
+            max_lag = lag_map.get(label, 0.0)
+            sum_lag = sum_map.get(label, 0.0)
+            lag_icon = "🔴" if max_lag > 10_000 else ("🟡" if max_lag > 1_000 else "🟢")
+            lines.append(f"| `{label}` | {max_lag:,.0f} | {sum_lag:,.0f} | {lag_icon} |")
+        lines.append("")
+
+    # ── Consumer Throughput per topic ─────────────────────────────────────────
+    if kafka.consumer_msg_rates:
+        lines += ["**Consumer Throughput (msgs/sec)**", ""]
+        lines += ["| Topic | msgs/sec |", "|---|---|"]
+        for topic, rate in sorted(kafka.consumer_msg_rates, key=lambda x: -x[1])[:10]:
+            lines.append(f"| `{topic}` | {rate:.3f} |")
+        lines.append("")
+
+    # ── Producer Throughput per topic ─────────────────────────────────────────
+    if kafka.producer_throughputs:
+        lines += ["**Producer Throughput (msgs/sec)**", ""]
+        lines += ["| Topic | msgs/sec |", "|---|---|"]
+        for topic, rate in sorted(kafka.producer_throughputs, key=lambda x: -x[1])[:10]:
+            lines.append(f"| `{topic}` | {rate:.3f} |")
+        lines.append("")
+
+    # ── Broker Topic Rates ────────────────────────────────────────────────────
+    if kafka.broker_topic_rates:
+        lines += ["**Broker Topic MessagesInPerSec**", ""]
+        lines += ["| Topic | msgs/sec |", "|---|---|"]
+        for topic, rate in kafka.broker_topic_rates:
+            lines.append(f"| `{topic}` | {rate:.3f} |")
+        lines.append("")
+
+    # ── CDC API RR Logs ───────────────────────────────────────────────────────
+    lines += ["**CDC API RR Logs**", ""]
+    lines += ["| Metric | Value | Status |", "|---|---|---|"]
+    if kafka.rr_success_pct is not None:
+        rr_icon = "🔴" if kafka.rr_success_pct < 80 else ("🟡" if kafka.rr_success_pct < 95 else "🟢")
+        lines.append(f"| RR Log Success % | {kafka.rr_success_pct:.1f}% | {rr_icon} |")
+    else:
+        lines.append("| RR Log Success % | N/A | ⚪ |")
+    if kafka.rr_vs_total_pct is not None:
+        rv_icon = "🟡" if kafka.rr_vs_total_pct < 80 else "🟢"
+        lines.append(f"| API RR logs vs Total logs % | {kafka.rr_vs_total_pct:.1f}% | {rv_icon} |")
+    else:
+        lines.append("| API RR logs vs Total logs % | N/A | ⚪ |")
+    lines.append("")
+
     return lines
 
 
@@ -481,6 +659,7 @@ def _render_l0(
     emr: Any,
     airflow: Optional[AirflowHealth],
     flags: list[tuple[int, str]],
+    ti_kafka: Optional[Any] = None,
 ) -> str:
     lines: list[str] = ["## L0 — Trends & Instance Health", ""]
 
@@ -501,8 +680,26 @@ def _render_l0(
             "",
         ]
 
-    if group_name == "UAA Services" and uaa_biz:
-        lines += _render_l0_uaa_biz(uaa_biz, flags)
+    if group_name == "UAA Services":
+        if uaa_biz:
+            biz_rows = _render_l0_uaa_biz(uaa_biz, flags)
+            # Kafka flagged rows are appended into the same Business Trends table
+            if biz_rows and ti_kafka:
+                kafka_rows = _render_l0_ti_kafka(ti_kafka, flags)
+                if kafka_rows:
+                    # Insert kafka rows before the trailing "" that closes the table
+                    insert_at = len(biz_rows) - 1
+                    biz_rows = biz_rows[:insert_at] + kafka_rows + biz_rows[insert_at:]
+            lines += biz_rows
+        elif ti_kafka:
+            kafka_rows = _render_l0_ti_kafka(ti_kafka, flags)
+            if kafka_rows:
+                lines += (
+                    ["### Business Trends — UAA", "",
+                     "| Metric | Current | Trend | Status |", "|---|---|---|---|"]
+                    + kafka_rows
+                    + [""]
+                )
     elif group_name == "Data Platform":
         lines += _render_l0_dp(dp_biz, dp_l0, emr, airflow, flags)
     elif group_name == "Central Services" and central_biz:
@@ -547,9 +744,10 @@ def _render_l1_servers(
     reports: list[tuple[str, L0Report]],
     flags: list[tuple[int, str]],
 ) -> list[str]:
-    CPU_WARN, CPU_CRIT = 70.0, 90.0
-    MEM_WARN, MEM_CRIT = 75.0, 90.0
-    DSK_WARN, DSK_CRIT = 80.0, 90.0
+    from .config import settings as _s
+    CPU_WARN, CPU_CRIT = _s.cpu_warn_pct,  _s.cpu_crit_pct
+    MEM_WARN, MEM_CRIT = _s.mem_warn_pct,  _s.mem_crit_pct
+    DSK_WARN, DSK_CRIT = _s.disk_warn_pct, _s.disk_crit_pct
 
     lines: list[str] = []
     has_any = False
@@ -629,9 +827,14 @@ def _render_l1_endpoints(
                     lat_icon = "🔴" if ratio >= 2.0 else "🟡"
                 else:
                     lat_icon = "🟢"
+                # Build a summary line that shows the *actual* flag reason, not
+                # just the success rate (which can look misleadingly healthy when
+                # the endpoint was flagged for errors or latency only).
+                reason_str = ", ".join(reasons) if reasons else "flagged"
+                summary_icon = "🔴" if suc_icon == "🔴" or lat_icon == "🔴" else "🟡"
                 flags.append((
-                    0 if suc_icon == "🔴" or lat_icon == "🔴" else 1,
-                    f"{suc_icon} {svc_name} · L1 · {ep.path} · {suc_str}",
+                    0 if summary_icon == "🔴" else 1,
+                    f"{summary_icon} {svc_name} · L1 · {ep.path} · {suc_str} · _{reason_str}_",
                 ))
                 lines.append(
                     f"- `{ep.path}` · {_fmt_hits(ep.hits)} hits · "
@@ -948,6 +1151,7 @@ def _render_l1(
     airflow: Optional[AirflowHealth],
     dp_biz: Optional[list[Any]],
     flags: list[tuple[int, str]],
+    ti_kafka: Optional[Any] = None,
 ) -> str:
     lines: list[str] = ["## L1 — Current State Detail", ""]
     lines.append("_Drill down when L0 shows 🟡 or 🔴_")
@@ -965,12 +1169,22 @@ def _render_l1(
         lines += ["---", ""]
     lines += queue_lines
 
-    if group_name == "UAA Services" and uaa_biz:
-        biz_l1 = _render_l1_uaa_biz(uaa_biz)
-        if biz_l1:
-            if server_lines or endpoint_lines or queue_lines:
-                lines += ["---", ""]
-            lines += biz_l1
+    if group_name == "UAA Services":
+        any_prev = bool(server_lines or endpoint_lines or queue_lines)
+        if uaa_biz:
+            biz_l1 = _render_l1_uaa_biz(uaa_biz)
+            if biz_l1:
+                if any_prev:
+                    lines += ["---", ""]
+                lines += biz_l1
+                any_prev = True
+        # Kafka / TI Pipeline — always shown in L1 for UAA group
+        if ti_kafka is not None:
+            kafka_l1 = _render_l1_ti_kafka(ti_kafka)
+            if kafka_l1:
+                if any_prev:
+                    lines += ["---", ""]
+                lines += kafka_l1
 
     if group_name == "Data Platform":
         dp_l1 = _render_l1_dp(dp_l0, connector_health, airflow, dp_biz, flags)
@@ -1270,12 +1484,16 @@ def render_hl_canvas(
     connector_health: Optional[KafkaConnectHealth] = None,
     airflow_health: Optional[AirflowHealth] = None,
     uks_metrics: Optional[Any] = None,
+    ti_kafka_metrics: Optional[Any] = None,
     include_l2: bool = True,
     l2_canvas_note: str = "",
 ) -> str:
     """Render the main HL canvas.
 
     Args:
+        ti_kafka_metrics: TIKafkaMetrics from uaa_kafka_collector.  Only used
+            for the UAA Services group.  L0 shows rows only when flagged;
+            L1 always shows the full Kafka / TI Pipeline section.
         include_l2: Set False to omit the L2 section (e.g. when posting L2 as a
             separate canvas).  A brief note is appended so readers know where to
             look.
@@ -1288,6 +1506,7 @@ def render_hl_canvas(
         group_name, reports,
         uaa_biz_metrics, central_biz_metrics, dp_biz_metrics,
         dp_l0_report, emr_report, airflow_health, flags,
+        ti_kafka=ti_kafka_metrics,
     )
     if group_name == "UKS Services":
         l0 += "\n" + "\n".join(_render_l0_uks(uks_metrics, flags))
@@ -1295,6 +1514,7 @@ def render_hl_canvas(
     l1 = _render_l1(
         group_name, reports,
         uaa_biz_metrics, dp_l0_report, connector_health, airflow_health, dp_biz_metrics, flags,
+        ti_kafka=ti_kafka_metrics,
     )
     if group_name == "UKS Services":
         uks_l1 = _render_l1_uks(uks_metrics, flags)

@@ -24,6 +24,7 @@ from .config import settings
 from .formatter import to_l0_report
 from .gateway import MetricsGateway
 from .hl_canvas_renderer import render_dp_l2_canvas, render_hl_canvas
+from .l0_manager_renderer import render_l0_manager_canvas, render_l0_manager_summary_blocks
 from .kafka_connect import fetch_all_connector_health
 from .models import AirflowHealth, Status
 from .services import load_services
@@ -133,6 +134,68 @@ async def _publish_dp_l2_canvas(
         log.info("DP L2 canvas card posted: %s", canvas_url)
     except SlackApiError as exc:
         log.error("DP L2 canvas card post error: %s", exc.response["error"])
+
+
+async def _publish_l0_manager_canvas(
+    markdown: str,
+    summary_blocks: list[dict],
+    title: str,
+) -> None:
+    """Post the all-groups L0 snapshot canvas to SLACK_L0_CHANNEL_ID."""
+    client  = AsyncWebClient(token=settings.slack_bot_token)
+    channel = settings.slack_l0_channel_id
+
+    if len(markdown) > _MAX_CANVAS_CHARS:
+        markdown = markdown[:_MAX_CANVAS_CHARS].rsplit("\n", 1)[0]
+        markdown += "\n\n> *Canvas truncated — content exceeded size limit.*\n"
+        log.warning("L0 manager canvas truncated to %d chars", len(markdown))
+
+    log.info("L0 manager canvas: %d chars  title=%r", len(markdown), title)
+
+    try:
+        resp = await client.api_call(
+            "canvases.create",
+            json={
+                "title": title,
+                "document_content": {"type": "markdown", "markdown": markdown},
+            },
+        )
+        canvas_id = resp.get("canvas_id", "")
+        log.info("L0 manager canvas created: canvas_id=%s", canvas_id)
+    except SlackApiError as exc:
+        log.error("L0 manager canvas create error: %s", exc.response["error"])
+        raise
+
+    canvas_url = ""
+    try:
+        auth      = await client.auth_test()
+        team_id   = auth.get("team_id", "")
+        workspace = auth.get("url", "").rstrip("/")
+        canvas_url = f"{workspace}/docs/{team_id}/{canvas_id}"
+    except SlackApiError:
+        pass
+
+    try:
+        await client.chat_postMessage(
+            channel=channel,
+            text=f"📊 {title}",
+            blocks=summary_blocks,
+        )
+        log.info("L0 manager summary posted: %r", title)
+    except SlackApiError as exc:
+        log.error("L0 manager summary post error: %s", exc.response["error"])
+        raise
+
+    if canvas_url:
+        try:
+            await client.chat_postMessage(
+                channel=channel,
+                text=canvas_url,
+                unfurl_links=True,
+            )
+            log.info("L0 manager canvas card posted: %s", canvas_url)
+        except SlackApiError as exc:
+            log.error("L0 manager canvas card post error: %s", exc.response["error"])
 
 
 async def _publish_hl_canvas(markdown: str, summary_blocks: list[dict], title: str) -> None:
@@ -251,6 +314,7 @@ async def run_hl_report() -> None:
     emr_report                = None
     dp_l0_report              = None
     uks_metrics               = None
+    ti_kafka_metrics          = None
 
     async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
         for service in services:
@@ -277,7 +341,11 @@ async def run_hl_report() -> None:
         central_biz_metrics = await collect_business_metrics(vm)
 
     from .uaa_business_collector import collect_uaa_business_metrics
-    uaa_biz_metrics = await collect_uaa_business_metrics()
+    from .uaa_kafka_collector import collect_ti_kafka_metrics
+    uaa_biz_metrics, ti_kafka_metrics = await asyncio.gather(
+        collect_uaa_business_metrics(),
+        collect_ti_kafka_metrics(),
+    )
 
     from .dp_business_collector import collect_dp_business_metrics
     dp_biz_metrics = await collect_dp_business_metrics()
@@ -364,11 +432,30 @@ async def run_hl_report() -> None:
             connector_health=connector_health       if is_dp  else None,
             airflow_health=airflow_health           if is_dp  else None,
             uks_metrics=uks_metrics                 if is_uks else None,
+            ti_kafka_metrics=ti_kafka_metrics        if is_uaa else None,
         )
 
         summary_blocks = _hl_summary_blocks(collected, group_name)
         await _publish_hl_canvas(markdown, summary_blocks, title=canvas_title)
         log.info("HL canvas posted: %r (%d service(s)).", canvas_title, len(collected))
+
+    # ── L0 Manager Snapshot — all groups in one canvas ─────────────────────────
+    # Posts to SLACK_L0_CHANNEL_ID (manager / senior-eng review channel).
+    # Reuses the already-collected `groups` and `uaa_biz_metrics` — zero extra queries.
+    if settings.slack_l0_channel_id and groups:
+        l0_title = f"Engineering Health Snapshot — {date_str}"
+        l0_md    = render_l0_manager_canvas(
+            groups, date_str,
+            uaa_biz_metrics=uaa_biz_metrics,
+            ti_kafka_metrics=ti_kafka_metrics,
+        )
+        if l0_md:
+            l0_blocks = render_l0_manager_summary_blocks(groups, date_str)
+            try:
+                await _publish_l0_manager_canvas(l0_md, l0_blocks, title=l0_title)
+                log.info("L0 manager snapshot posted to %s.", settings.slack_l0_channel_id)
+            except Exception as exc:
+                log.error("L0 manager canvas failed: %s", exc)
 
 
 def create_hl_scheduler() -> AsyncIOScheduler:

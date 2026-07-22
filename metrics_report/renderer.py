@@ -36,8 +36,10 @@ def _endpoint_is_flagged(ep: Endpoint, t: FlaggingThresholds) -> bool:
             return True
     elif ep.p99_ms >= t.p99_warn_ms:
         return True
-    # Any hard errors on the endpoint are always worth surfacing.
-    if ep.errors is not None and ep.errors > 0:
+    # Surface errors only when they're material: require ≥5 errors, or the
+    # success rate is already below the warn floor.  A single stray error on a
+    # 100 % endpoint is noise, not a signal worth putting in the Warning list.
+    if ep.errors is not None and ep.errors >= 5:
         return True
     return False
 
