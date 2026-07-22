@@ -375,6 +375,7 @@ async def run_hl_report() -> None:
     services = load_services()
     log.info("Starting HL report for %d service(s)...", len(services))
 
+    gateway = MetricsGateway(timeout_secs=settings.gateway_timeout_secs)
     groups: dict[str, list[tuple[str, object]]] = defaultdict(list)
 
     central_biz_metrics: list = []
@@ -385,65 +386,54 @@ async def run_hl_report() -> None:
     uks_metrics               = None
     ti_kafka_metrics          = None
 
-    from .dp_l0_collector import collect_dp_l0
-    from .uks_collector import collect_uks_metrics
-    from .central_business_collector import collect_business_metrics
-    from .uaa_business_collector import collect_uaa_vm_metrics
+    async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
+        for service in services:
+            if not service.system_selector and not service.api_selector:
+                continue
+            log.info("HL collecting: %s [group=%s]", service.display_name, service.report_group)
+            raw = await collect(vm, gateway, service)
+            l0  = to_l0_report(raw, service_name=service.display_name, show_api_metrics=bool(service.api_job))
+            groups[service.report_group].append((service.display_name, l0))
+
+        dp_l0_svc = next((s for s in services if s.display_name == "Data Platform L0"), None)
+        if dp_l0_svc and (dp_l0_svc.kafka_cdc_sinks or dp_l0_svc.kafka_sinks):
+            from .dp_l0_collector import collect_dp_l0
+            dp_l0_report = await collect_dp_l0(
+                vm,
+                dp_l0_svc.kafka_cdc_sinks,
+                dp_l0_svc.kafka_sinks or None,
+            )
+
+        from .uks_collector import collect_uks_metrics
+        uks_metrics = await collect_uks_metrics(vm)
+
+        from .central_business_collector import collect_business_metrics
+        central_biz_metrics = await collect_business_metrics(vm)
+
+        # ALSM/SAISM latency — must run inside this VMClient context so they
+        # reuse the already-open TCP connection pool instead of opening new
+        # independent connections to a potentially loaded VM server.
+        from .uaa_business_collector import collect_uaa_vm_metrics
+        uaa_vm_metrics = await collect_uaa_vm_metrics(vm)
+
     from .uaa_business_collector import collect_uaa_business_metrics
     from .uaa_kafka_collector import collect_ti_kafka_metrics
-    from .dp_business_collector import collect_dp_business_metrics
-    from .emr_collector import collect_emr_metrics
-
-    dp_l0_svc = next((s for s in services if s.display_name == "Data Platform L0"), None)
-    svc_list  = [s for s in services if s.system_selector or s.api_selector]
-
-    async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
-
-        # ── All services in parallel (each gets its own gateway) ──────────────
-        async def _collect_svc(svc):
-            log.info("HL collecting: %s [group=%s]", svc.display_name, svc.report_group)
-            gw  = MetricsGateway(timeout_secs=settings.gateway_timeout_secs)
-            raw = await collect(vm, gw, svc)
-            return svc, raw
-
-        svc_results = await asyncio.gather(*[_collect_svc(s) for s in svc_list])
-        for svc, raw in svc_results:
-            l0 = to_l0_report(raw, service_name=svc.display_name, show_api_metrics=bool(svc.api_job))
-            groups[svc.report_group].append((svc.display_name, l0))
-
-        # ── Specialist VM collectors in parallel ──────────────────────────────
-        async def _dp_l0():
-            if dp_l0_svc and (dp_l0_svc.kafka_cdc_sinks or dp_l0_svc.kafka_sinks):
-                return await collect_dp_l0(vm, dp_l0_svc.kafka_cdc_sinks, dp_l0_svc.kafka_sinks or None)
-            return None
-
-        (
-            dp_l0_report,
-            uks_metrics,
-            central_biz_metrics,
-            uaa_vm_metrics,
-        ) = await asyncio.gather(
-            _dp_l0(),
-            collect_uks_metrics(vm),
-            collect_business_metrics(vm),
-            # ALSM/SAISM latency — inside shared VM context to reuse TCP pool
-            collect_uaa_vm_metrics(vm),
-        )
-
-    # ── All non-VM collectors in one gather ───────────────────────────────────
-    (
-        uaa_biz_trino,
-        ti_kafka_metrics,
-        dp_biz_metrics,
-        emr_report,
-        connector_result,
-        db_result,
-        view_flow_result,
-    ) = await asyncio.gather(
+    uaa_biz_trino, ti_kafka_metrics = await asyncio.gather(
         collect_uaa_business_metrics(),
         collect_ti_kafka_metrics(),
-        collect_dp_business_metrics(),
-        collect_emr_metrics(),
+    )
+    # Merge VM metrics (ALSM/SAISM) with Trino metrics
+    uaa_biz_metrics = uaa_vm_metrics + uaa_biz_trino
+
+    from .dp_business_collector import collect_dp_business_metrics
+    dp_biz_metrics = await collect_dp_business_metrics()
+
+    from .emr_collector import collect_emr_metrics
+    emr_report = await collect_emr_metrics()
+
+    date_str = datetime.now(IST).strftime("%d %b %Y")
+
+    connector_result, db_result, view_flow_result = await asyncio.gather(
         fetch_all_connector_health(settings.kafka_connect_instances) if settings.kafka_connect_instances else asyncio.sleep(0),
         fetch_airflow_health(settings.airflow_db_url),
         fetch_view_flow_health(
@@ -452,14 +442,11 @@ async def run_hl_report() -> None:
             settings.airflow_api_password,
         ),
     )
-    uaa_biz_metrics  = uaa_vm_metrics + uaa_biz_trino
     connector_health = connector_result if connector_result else None
     airflow_health   = AirflowHealth(
         dag_runs=db_result.dag_runs if db_result else [],
         view_flow=view_flow_result,
     )
-
-    date_str = datetime.now(IST).strftime("%d %b %Y")
 
     ordered_keys  = [g for g in _GROUP_ORDER if g in groups]
     ordered_keys += [g for g in groups if g not in _GROUP_ORDER]
@@ -530,7 +517,7 @@ async def run_hl_report() -> None:
         await _publish_hl_canvas(markdown, summary_blocks, title=canvas_title)
         log.info("HL canvas posted: %r (%d service(s)).", canvas_title, len(collected))
 
-    # ── L0 Snapshots — one focused canvas per group ──────────────────────
+    # ── L0 Snapshots — one focused canvas per group ───────────────────
     # Posts to SLACK_L0_CHANNEL_ID.  Each group (UAA / DP / Central / UKS) gets
     # its own canvas with L0 metrics + a plain-English health verdict.
     # Reuses already-collected data — zero extra VM queries.
@@ -588,6 +575,7 @@ async def run_l0_manager_only() -> None:
     services = load_services()
     log.info("L0 manager: collecting metrics for %d service(s)...", len(services))
 
+    gateway = MetricsGateway(timeout_secs=settings.gateway_timeout_secs)
     groups: dict[str, list[tuple[str, object]]] = defaultdict(list)
 
     uaa_biz_metrics:     list = []
@@ -598,74 +586,67 @@ async def run_l0_manager_only() -> None:
     dp_l0_report               = None
     emr_report                 = None
     airflow_health             = None
+    connector_health           = None
 
-    from .dp_l0_collector import collect_dp_l0
-    from .uks_collector import collect_uks_metrics
-    from .central_business_collector import collect_business_metrics
-    from .uaa_business_collector import collect_uaa_vm_metrics
+    async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
+        for service in services:
+            if not service.system_selector and not service.api_selector:
+                continue
+            raw = await collect(vm, gateway, service)
+            l0  = to_l0_report(raw, service_name=service.display_name, show_api_metrics=bool(service.api_job))
+            groups[service.report_group].append((service.display_name, l0))
+
+        from .uks_collector import collect_uks_metrics
+        uks_metrics = await collect_uks_metrics(vm)
+
+        from .central_business_collector import collect_business_metrics
+        central_biz_metrics = await collect_business_metrics(vm)
+
+        dp_l0_svc = next((s for s in services if s.display_name == "Data Platform L0"), None)
+        if dp_l0_svc and (dp_l0_svc.kafka_cdc_sinks or dp_l0_svc.kafka_sinks):
+            from .dp_l0_collector import collect_dp_l0
+            dp_l0_report = await collect_dp_l0(
+                vm,
+                dp_l0_svc.kafka_cdc_sinks,
+                dp_l0_svc.kafka_sinks or None,
+            )
+
+        # ALSM/SAISM latency — must run inside this VMClient context so they
+        # reuse the already-open TCP connection pool instead of opening new
+        # independent connections to a potentially loaded VM server.
+        from .uaa_business_collector import collect_uaa_vm_metrics
+        uaa_vm_metrics = await collect_uaa_vm_metrics(vm)
+
+    # Out-of-VM collectors (Trino-based)
     from .uaa_business_collector import collect_uaa_business_metrics
     from .uaa_kafka_collector import collect_ti_kafka_metrics
     from .dp_business_collector import collect_dp_business_metrics
     from .emr_collector import collect_emr_metrics
 
-    dp_l0_svc = next((s for s in services if s.display_name == "Data Platform L0"), None)
-    svc_list  = [s for s in services if s.system_selector or s.api_selector]
-
-    async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
-
-        # ── All services in parallel (each gets its own gateway) ──────────────
-        async def _collect_svc(svc):
-            gw  = MetricsGateway(timeout_secs=settings.gateway_timeout_secs)
-            raw = await collect(vm, gw, svc)
-            return svc, raw
-
-        svc_results = await asyncio.gather(*[_collect_svc(s) for s in svc_list])
-        for svc, raw in svc_results:
-            l0 = to_l0_report(raw, service_name=svc.display_name, show_api_metrics=bool(svc.api_job))
-            groups[svc.report_group].append((svc.display_name, l0))
-
-        # ── Specialist VM collectors in parallel ──────────────────────────────
-        async def _dp_l0():
-            if dp_l0_svc and (dp_l0_svc.kafka_cdc_sinks or dp_l0_svc.kafka_sinks):
-                return await collect_dp_l0(vm, dp_l0_svc.kafka_cdc_sinks, dp_l0_svc.kafka_sinks or None)
-            return None
-
-        (
-            dp_l0_report,
-            uks_metrics,
-            central_biz_metrics,
-            uaa_vm_metrics,
-        ) = await asyncio.gather(
-            _dp_l0(),
-            collect_uks_metrics(vm),
-            collect_business_metrics(vm),
-            # ALSM/SAISM latency — inside shared VM context to reuse TCP pool
-            collect_uaa_vm_metrics(vm),
-        )
-
-    # ── All non-VM collectors + Airflow + Kafka Connect in one gather ────────────
     (
         uaa_biz_trino,
         ti_kafka_metrics,
         dp_biz_metrics,
         emr_report,
-        airflow_db_result,
-        view_flow_result,
-        connector_result,
     ) = await asyncio.gather(
         collect_uaa_business_metrics(),
         collect_ti_kafka_metrics(),
         collect_dp_business_metrics(),
         collect_emr_metrics(),
+    )
+    # Merge VM metrics (ALSM/SAISM) with Trino metrics
+    uaa_biz_metrics = uaa_vm_metrics + uaa_biz_trino
+
+    # Airflow health + connector health (non-blocking — skip silently if not configured)
+    connector_result, airflow_db_result, view_flow_result = await asyncio.gather(
+        fetch_all_connector_health(settings.kafka_connect_instances) if settings.kafka_connect_instances else asyncio.sleep(0),
         fetch_airflow_health(settings.airflow_db_url),
         fetch_view_flow_health(
             settings.airflow_api_url,
             settings.airflow_api_username,
             settings.airflow_api_password,
         ),
-        fetch_all_connector_health(settings.kafka_connect_instances) if settings.kafka_connect_instances else asyncio.sleep(0),
     )
-    uaa_biz_metrics  = uaa_vm_metrics + uaa_biz_trino
     connector_health = connector_result if connector_result else None
     airflow_health   = AirflowHealth(
         dag_runs=airflow_db_result.dag_runs if airflow_db_result else [],

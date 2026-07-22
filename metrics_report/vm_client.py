@@ -2,37 +2,10 @@
 Thin async wrapper around the VictoriaMetrics Prometheus-compatible HTTP API.
 Supports instant queries (/api/v1/query) returning a single scalar or the
 first result value from a vector.
-
-Rate-limiting architecture (two-layer)
-───────────────────────────────────────
-Layer 1 — Token-bucket rate limiter  (_VMRateLimiter / _vm_rate_limiter)
-  Limits *requests per second* across ALL VMClient instances.
-  Default: 10 req/s with a burst of 10.  This is the primary defence against
-  HTTP 429 — VM rate-limits by req/s, not by concurrent connections.
-  Configurable via VM_MAX_RPS in .env.
-
-Layer 2 — Process-wide concurrency cap  (_VM_GLOBAL_SEM)
-  Limits *in-flight concurrent requests* across all VMClient instances.
-  Prevents thread/connection exhaustion when requests are slow (e.g. range
-  queries) and many collectors open independent VMClient connections at once.
-  Default: 10.  Configurable via VM_MAX_CONCURRENT in .env.
-
-Per-collector local semaphores (smaller wins, inside the global cap):
-  Kafka:      uaa_kafka_collector     — Semaphore(4)
-  Central:    central_business_coll.  — Semaphore(6)
-  UKS:        uks_collector           — Semaphore(4)
-  DP L0:      dp_l0_collector         — Semaphore(4)
-  ALSM/SAISM: uaa_business_collector  — Semaphore(4)
-
-Request flow:
-  await _vm_rate_limiter.acquire()   # wait for a token (rate limit)
-  async with _vm_global_sem:         # wait for a concurrency slot
-      resp = await httpx.get(...)    # actual HTTP call
 """
 from __future__ import annotations
 import asyncio
 import logging
-import time as _time
 from typing import Optional
 
 import httpx
@@ -45,102 +18,9 @@ _QUERY_PATH       = "/api/v1/query"
 _QUERY_RANGE_PATH = "/api/v1/query_range"
 
 # Retry configuration for HTTP 429 (Too Many Requests).
-_MAX_RETRIES   = 3
-_RETRY_DELAY_S = 2.0  # seconds between attempts
-
-
-# ── Layer 1: Token-bucket rate limiter ────────────────────────────────────────
-
-class _VMRateLimiter:
-    """Async token-bucket rate limiter shared across all VMClient instances.
-
-    Allows short bursts (up to `burst` tokens) then settles to `rate` req/s.
-    Thread-safe within a single asyncio event loop.
-    """
-
-    def __init__(self, rate: float = 10.0, burst: float = 10.0) -> None:
-        self.rate  = rate   # tokens refilled per second
-        self.burst = burst  # max bucket size
-        self._tokens  = burst
-        self._updated = _time.monotonic()
-        self._lock: Optional[asyncio.Lock] = None
-
-    def _get_lock(self) -> asyncio.Lock:
-        if self._lock is None:
-            self._lock = asyncio.Lock()
-        return self._lock
-
-    async def acquire(self) -> None:
-        """Block until one token is available, then consume it."""
-        lock = self._get_lock()
-        while True:
-            async with lock:
-                now     = _time.monotonic()
-                elapsed = now - self._updated
-                self._tokens  = min(self.burst, self._tokens + elapsed * self.rate)
-                self._updated = now
-                if self._tokens >= 1.0:
-                    self._tokens -= 1.0
-                    return
-                # Calculate how long until the next token arrives
-                wait = (1.0 - self._tokens) / self.rate
-            # Release the lock while sleeping so other coroutines can check
-            await asyncio.sleep(wait)
-
-    def reconfigure(self, rate: float, burst: float) -> None:
-        self.rate  = rate
-        self.burst = burst
-        self._tokens  = burst   # reset bucket on reconfigure
-        self._updated = _time.monotonic()
-        log.info("VM rate limiter set to %.1f req/s (burst=%s).", rate, burst)
-
-
-_vm_rate_limiter: Optional[_VMRateLimiter] = None
-
-
-def _get_rate_limiter() -> _VMRateLimiter:
-    """Return (or lazily create) the process-wide rate limiter."""
-    global _vm_rate_limiter
-    if _vm_rate_limiter is None:
-        _vm_rate_limiter = _VMRateLimiter()
-    return _vm_rate_limiter
-
-
-def configure_rate_limiter(rate: float, burst: Optional[float] = None) -> None:
-    """Set the global VM request rate (call from config at startup).
-
-    Args:
-        rate:  Max sustained requests per second.
-        burst: Max burst size (default: same as rate).
-    """
-    rl = _get_rate_limiter()
-    rl.reconfigure(rate=rate, burst=burst if burst is not None else rate)
-
-
-# ── Layer 2: Process-wide concurrency cap ─────────────────────────────────────
-
-_VM_GLOBAL_SEM_LIMIT: int = 10
-_VM_GLOBAL_SEM: Optional[asyncio.Semaphore] = None
-
-
-def _get_global_sem() -> asyncio.Semaphore:
-    """Return (or lazily create) the process-wide concurrency semaphore."""
-    global _VM_GLOBAL_SEM
-    if _VM_GLOBAL_SEM is None:
-        _VM_GLOBAL_SEM = asyncio.Semaphore(_VM_GLOBAL_SEM_LIMIT)
-    return _VM_GLOBAL_SEM
-
-
-def configure_global_sem(limit: int) -> None:
-    """Override the global concurrency cap (call from config at startup)."""
-    global _VM_GLOBAL_SEM, _VM_GLOBAL_SEM_LIMIT
-    _VM_GLOBAL_SEM_LIMIT = limit
-    _VM_GLOBAL_SEM = asyncio.Semaphore(limit)
-    log.info("VM global semaphore set to %d concurrent queries.", limit)
-
-
-# Track whether we've already sent a 429-rate-limit PD alert this process run.
-_pagerduty_429_alerted = False
+# When VictoriaMetrics rate-limits a query, back off briefly and try again.
+_MAX_RETRIES   = 2
+_RETRY_DELAY_S = 1.5  # seconds between attempts
 
 
 
@@ -154,16 +34,7 @@ class VMClient:
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             headers=self._headers,
-            # Granular timeout:
-            #   connect=5s  — fast fail if VM refuses new TCP connections
-            #                 (ALSM/SAISM were hitting ConnectTimeout at 30s
-            #                  because VM was overloaded when they opened their
-            #                  own independent httpx.AsyncClient late in the run)
-            #   read=30s    — allow expensive PromQL (histogram_quantile + offset 24h)
-            #                 that regularly takes 10–20 s under VM load
-            #   write=10s   — generous for query param encoding
-            #   pool=5s     — fast fail on connection pool exhaustion
-            timeout=httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0),
+            timeout=10.0,
         )
         return self
 
@@ -174,65 +45,23 @@ class VMClient:
     async def _get_with_retry(self, path: str, params: dict) -> httpx.Response:
         """GET with automatic retry on 429 (rate-limited) responses.
 
-        Every request first acquires the process-wide semaphore (_VM_GLOBAL_SEM)
-        before touching the network.  This prevents aggregate bursts when multiple
-        collectors open independent VMClient instances concurrently.
-
-        PagerDuty alerting:
-          • First 429 encountered → warning alert (dedup_key="vm-http-429").
-            Fires immediately so on-call knows rate limiting is happening, even
-            if subsequent retries recover.
-          • Any other non-2xx on the FINAL attempt → critical/warning alert.
+        Any non-2xx response (excluding mid-retry 429s) fires a PagerDuty alert.
+        The dedup_key collapses repeated failures for the same HTTP status code
+        into a single PD incident instead of an alert storm.
         """
-        global _pagerduty_429_alerted
         assert self._client is not None, "VMClient must be used as async context manager"
-        _rl  = _get_rate_limiter()
-        _sem = _get_global_sem()
         for attempt in range(_MAX_RETRIES + 1):
-            await _rl.acquire()          # Layer 1: respect req/s limit
-            async with _sem:             # Layer 2: cap concurrent in-flight
-                resp = await self._client.get(path, params=params)
-
-            if resp.status_code == 429:
-                # Fire a PD warning on the very first 429 we see (process-wide
-                # dedup so a burst of concurrent 429s creates exactly one incident).
-                if not _pagerduty_429_alerted:
-                    _pagerduty_429_alerted = True
-                    asyncio.create_task(fire_alert(
-                        summary="VictoriaMetrics rate-limited (HTTP 429) — queries are being retried",
-                        severity="warning",
-                        source=self._base_url + path,
-                        component="vm_client",
-                        details={
-                            "path": path,
-                            "attempt": attempt + 1,
-                            "max_retries": _MAX_RETRIES,
-                            "retry_delay_s": _RETRY_DELAY_S,
-                        },
-                        dedup_key="vm-http-429",
-                    ))
-                if attempt < _MAX_RETRIES:
-                    log.warning(
-                        "VictoriaMetrics 429 on attempt %d/%d — backing off %.1fs before retry",
-                        attempt + 1, _MAX_RETRIES + 1, _RETRY_DELAY_S,
-                    )
-                    await asyncio.sleep(_RETRY_DELAY_S)
-                    continue
-                # All retries exhausted — escalate to critical
-                asyncio.create_task(fire_alert(
-                    summary=f"VictoriaMetrics persistent rate-limit — all {_MAX_RETRIES + 1} attempts returned 429",
-                    severity="critical",
-                    source=self._base_url + path,
-                    component="vm_client",
-                    details={"path": path, "attempts": _MAX_RETRIES + 1},
-                    dedup_key="vm-http-429-exhausted",
-                ))
-
+            resp = await self._client.get(path, params=params)
+            if resp.status_code == 429 and attempt < _MAX_RETRIES:
+                log.debug("VictoriaMetrics 429 on attempt %d, retrying in %.1fs", attempt + 1, _RETRY_DELAY_S)
+                await asyncio.sleep(_RETRY_DELAY_S)
+                continue
             if not resp.is_success:
-                # Non-429 failure (5xx, 4xx other) — always alert
+                # Fire PD alert then propagate the exception.
+                # create_task keeps the coroutine alive even after raise_for_status().
                 severity = "critical" if resp.status_code >= 500 else "warning"
                 asyncio.create_task(fire_alert(
-                    summary=f"VictoriaMetrics API error: HTTP {resp.status_code} on {path}",
+                    summary=f"VictoriaMetrics API non-200: HTTP {resp.status_code} on {path}",
                     severity=severity,
                     source=self._base_url + path,
                     component="vm_client",
