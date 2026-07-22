@@ -122,9 +122,9 @@ if __name__ == "__main__":
     group = args.group or args.group_name
 
     if args.l0_now:
-        from metrics_report.hl_scheduler import run_hl_report
-        asyncio.run(run_hl_report())
-        log.info("L0 manager snapshot (and HL canvases) complete.")
+        from metrics_report.hl_scheduler import run_l0_manager_only
+        asyncio.run(run_l0_manager_only())
+        log.info("L0 manager snapshot complete.")
     elif args.hl_now:
         from metrics_report.hl_scheduler import run_hl_report
         asyncio.run(run_hl_report())

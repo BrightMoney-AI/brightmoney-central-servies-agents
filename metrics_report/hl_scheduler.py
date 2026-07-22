@@ -458,6 +458,59 @@ async def run_hl_report() -> None:
                 log.error("L0 manager canvas failed: %s", exc)
 
 
+async def run_l0_manager_only() -> None:
+    """Collect all metrics and post ONLY the L0 manager snapshot canvas.
+
+    Skips the per-group HL canvases (those go to SLACK_HL_CHANNEL_ID).
+    Use ``python -m metrics_report.main --l0-now`` to invoke this.
+    """
+    if not settings.slack_l0_channel_id:
+        log.info("SLACK_L0_CHANNEL_ID not set — L0 manager snapshot skipped.")
+        return
+
+    services = load_services()
+    log.info("L0 manager: collecting metrics for %d service(s)...", len(services))
+
+    gateway = MetricsGateway(timeout_secs=settings.gateway_timeout_secs)
+    groups: dict[str, list[tuple[str, object]]] = defaultdict(list)
+
+    uaa_biz_metrics: list = []
+    ti_kafka_metrics       = None
+    uks_metrics            = None
+
+    async with VMClient(settings.vm_base_url, headers=settings.vm_headers) as vm:
+        for service in services:
+            if not service.system_selector and not service.api_selector:
+                continue
+            raw = await collect(vm, gateway, service)
+            l0  = to_l0_report(raw, service_name=service.display_name, show_api_metrics=bool(service.api_job))
+            groups[service.report_group].append((service.display_name, l0))
+
+        from .uks_collector import collect_uks_metrics
+        uks_metrics = await collect_uks_metrics(vm)
+
+    from .uaa_business_collector import collect_uaa_business_metrics
+    from .uaa_kafka_collector import collect_ti_kafka_metrics
+    uaa_biz_metrics, ti_kafka_metrics = await asyncio.gather(
+        collect_uaa_business_metrics(),
+        collect_ti_kafka_metrics(),
+    )
+
+    date_str = datetime.now(IST).strftime("%d %b %Y")
+    l0_title = f"Engineering Health Snapshot — {date_str}"
+    l0_md    = render_l0_manager_canvas(
+        groups, date_str,
+        uaa_biz_metrics=uaa_biz_metrics,
+        ti_kafka_metrics=ti_kafka_metrics,
+    )
+    if l0_md:
+        l0_blocks = render_l0_manager_summary_blocks(groups, date_str)
+        await _publish_l0_manager_canvas(l0_md, l0_blocks, title=l0_title)
+        log.info("L0 manager snapshot posted to %s.", settings.slack_l0_channel_id)
+    else:
+        log.warning("L0 manager canvas was empty — nothing posted.")
+
+
 def create_hl_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
