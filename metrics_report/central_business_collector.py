@@ -36,7 +36,7 @@ class BusinessMetric:
 async def collect_business_metrics(vm: VMClient) -> list[BusinessMetric]:
     """Run all queries from central_business.json; skip entries that return no data.
 
-    Queries are issued with a concurrency cap (_SEM_LIMIT) to avoid bursting
+    Queries are issued with a concurrency cap (Semaphore(4)) to avoid bursting
     VictoriaMetrics with O(100) simultaneous requests and triggering 429s.
     """
     path = _PROJECT_ROOT / "central_business.json"
@@ -45,7 +45,11 @@ async def collect_business_metrics(vm: VMClient) -> list[BusinessMetric]:
         return []
 
     entries: list[dict] = json.loads(path.read_text())
-    _sem = asyncio.Semaphore(6)   # max 6 in-flight at once; global cap is 12
+    # Cap at 4 concurrent — matches uaa_kafka_collector's limit.
+    # Keeps total in-flight queries from this collector ≤ 4 at any moment,
+    # preventing 429 bursts on VictoriaMetrics (which rate-limits across all
+    # callers sharing the same cluster).
+    _sem = asyncio.Semaphore(4)
 
     async def run_one(entry: dict) -> list[BusinessMetric]:
         taglist = entry.get("taglist")
