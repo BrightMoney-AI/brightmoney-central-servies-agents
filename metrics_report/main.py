@@ -71,21 +71,23 @@ async def _scheduled(group: str | None) -> None:
 
 
 async def _now(group: str | None) -> None:
-    """Fire detailed report + HL canvases + L0 manager snapshot immediately."""
+    """Fire all reports in priority order: L0 → HL → legacy detailed.
+
+    L0 manager snapshots post first so managers get the quick health verdict
+    immediately.  HL canvases (full L0/L1/L2 detail) follow.  The legacy
+    per-service detailed report posts last.
+    """
     from .scheduler import run_report
     from .hl_scheduler import run_hl_report
     from .config import settings
 
-    await run_report(group=group)
-
-    # run_hl_report handles both HL canvases AND the L0 manager snapshot
-    # (SLACK_L0_CHANNEL_ID is checked inside run_hl_report).
+    # run_hl_report now posts L0 snapshots first, then HL canvases.
     # Skip if a single-group run was requested: the manager snapshot needs all groups.
-    if settings.slack_hl_channel_id and group is None:
+    if (settings.slack_hl_channel_id or settings.slack_l0_channel_id) and group is None:
         await run_hl_report()
-    elif settings.slack_l0_channel_id and group is None:
-        # HL disabled but L0 manager channel is set — run HL report for the manager canvas
-        await run_hl_report()
+
+    # Legacy detailed per-service report runs last.
+    await run_report(group=group)
 
 
 if __name__ == "__main__":
