@@ -1011,5 +1011,14 @@
       ".*webhook.*",
       ".*bwg.*"
     ]
+  },
+  {
+    "display_name": "UKS KYC",
+    "name_patterns": [
+      "p-bm-uks-app.*",
+      "p-bm-uks-celery.*"
+    ],
+    "system_job": "system_metrics",
+    "report_group": "UKS Services"
   }
 ]
