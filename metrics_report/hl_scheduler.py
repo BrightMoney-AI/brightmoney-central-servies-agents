@@ -23,7 +23,7 @@ from .collector import collect
 from .config import settings
 from .formatter import to_l0_report
 from .gateway import MetricsGateway
-from .hl_canvas_renderer import render_hl_canvas
+from .hl_canvas_renderer import render_dp_l2_canvas, render_hl_canvas
 from .kafka_connect import fetch_all_connector_health
 from .models import AirflowHealth, Status
 from .services import load_services
@@ -41,7 +41,12 @@ _MAX_CANVAS_CHARS = 80_000  # Slack gateway times out above ~100 KB; stay safe
 
 
 def _trim_canvas(markdown: str) -> str:
-    """Drop L2 section if content exceeds the Slack canvas size limit."""
+    """Fallback trimmer for non-DP canvases: drop L2 if content exceeds the limit.
+
+    For Data Platform, overflow is handled proactively by posting L2 as a
+    separate canvas (see ``run_hl_report``), so this function is only a
+    safety-net for UAA / Central / UKS which have smaller L2 sections.
+    """
     if len(markdown) <= _MAX_CANVAS_CHARS:
         return markdown
     # Find the L2 heading and cut there
@@ -56,6 +61,78 @@ def _trim_canvas(markdown: str) -> str:
     truncated += "\n\n> *Canvas truncated — content exceeded size limit.*\n"
     log.warning("Canvas hard-truncated: %d → %d chars", len(markdown), len(truncated))
     return truncated
+
+
+async def _publish_dp_l2_canvas(
+    markdown: str,
+    title: str,
+    channel: str,
+    client: "AsyncWebClient",
+) -> None:
+    """Create the standalone DP L2 canvas and post a link message to the channel."""
+    if not markdown:
+        log.info("DP L2 canvas skipped — no content.")
+        return
+
+    log.info("DP L2 canvas size: %d chars  title=%r", len(markdown), title)
+
+    # Hard-cap the L2 canvas itself too (safety net)
+    if len(markdown) > _MAX_CANVAS_CHARS:
+        markdown = markdown[:_MAX_CANVAS_CHARS].rsplit("\n", 1)[0]
+        markdown += "\n\n> *Canvas truncated — content exceeded size limit.*\n"
+        log.warning("DP L2 canvas hard-truncated to %d chars", len(markdown))
+
+    try:
+        resp = await client.api_call(
+            "canvases.create",
+            json={
+                "title": title,
+                "document_content": {"type": "markdown", "markdown": markdown},
+            },
+        )
+        canvas_id = resp.get("canvas_id", "")
+        log.info("DP L2 canvas created: canvas_id=%s  title=%r", canvas_id, title)
+    except SlackApiError as exc:
+        log.error("DP L2 canvas create error: %s", exc.response["error"])
+        return
+
+    # Build and post the link card
+    canvas_url = ""
+    try:
+        auth      = await client.auth_test()
+        team_id   = auth.get("team_id", "")
+        workspace = auth.get("url", "").rstrip("/")
+        canvas_url = f"{workspace}/docs/{team_id}/{canvas_id}"
+    except SlackApiError:
+        pass
+
+    try:
+        await client.chat_postMessage(
+            channel=channel,
+            text=canvas_url or f"📋 {title}",
+            blocks=[
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": (
+                            f"*📋 {title}*\n"
+                            "_L2 deep analysis — validation failures, stale views, EMR cube detail_"
+                        ),
+                    },
+                },
+            ],
+            unfurl_links=bool(canvas_url),
+        )
+        if canvas_url:
+            await client.chat_postMessage(
+                channel=channel,
+                text=canvas_url,
+                unfurl_links=True,
+            )
+        log.info("DP L2 canvas card posted: %s", canvas_url)
+    except SlackApiError as exc:
+        log.error("DP L2 canvas card post error: %s", exc.response["error"])
 
 
 async def _publish_hl_canvas(markdown: str, summary_blocks: list[dict], title: str) -> None:
@@ -228,6 +305,8 @@ async def run_hl_report() -> None:
     ordered_keys  = [g for g in _GROUP_ORDER if g in groups]
     ordered_keys += [g for g in groups if g not in _GROUP_ORDER]
 
+    client = AsyncWebClient(token=settings.slack_bot_token)
+
     for group_name in ordered_keys:
         collected    = groups[group_name]
         canvas_title = f"{group_name} — Health Overview — {date_str}"
@@ -237,15 +316,70 @@ async def run_hl_report() -> None:
         is_cen = group_name == "Central Services"
         is_uks = group_name == "UKS Services"
 
+        # ── Data Platform: try-fit L2 in main canvas; split if it overflows ───
+        if is_dp:
+            l2_title    = f"Data Platform — L2 Deep Analysis — {date_str}"
+            l2_markdown = render_dp_l2_canvas(
+                dp_biz_metrics, emr_report, title=l2_title, date_str=date_str
+            )
+
+            # First attempt: render with L2 included
+            markdown = render_hl_canvas(
+                group_name=group_name,
+                reports=collected,
+                title=canvas_title,
+                dp_biz_metrics=dp_biz_metrics,
+                dp_l0_report=dp_l0_report,
+                emr_report=emr_report,
+                connector_health=connector_health,
+                airflow_health=airflow_health,
+                include_l2=True,
+            )
+
+            # If combined canvas exceeds the limit, split L2 into its own canvas
+            if l2_markdown and len(markdown) > _MAX_CANVAS_CHARS:
+                log.info(
+                    "DP canvas oversized (%d chars) — splitting L2 into separate canvas.",
+                    len(markdown),
+                )
+                markdown = render_hl_canvas(
+                    group_name=group_name,
+                    reports=collected,
+                    title=canvas_title,
+                    dp_biz_metrics=dp_biz_metrics,
+                    dp_l0_report=dp_l0_report,
+                    emr_report=emr_report,
+                    connector_health=connector_health,
+                    airflow_health=airflow_health,
+                    include_l2=False,
+                    l2_canvas_note=(
+                        f"→ *L2 Deep Analysis* (validation failures, stale views, full EMR tables) "
+                        f"is posted as a separate canvas: *{l2_title}*"
+                    ),
+                )
+                summary_blocks = _hl_summary_blocks(collected, group_name)
+                await _publish_hl_canvas(markdown, summary_blocks, title=canvas_title)
+                log.info("HL canvas posted: %r (%d service(s)).", canvas_title, len(collected))
+                await _publish_dp_l2_canvas(
+                    l2_markdown, l2_title,
+                    channel=settings.slack_hl_channel_id,
+                    client=client,
+                )
+                continue
+
+            # L2 fits (or there was no L2 content) — post as one canvas
+            summary_blocks = _hl_summary_blocks(collected, group_name)
+            await _publish_hl_canvas(markdown, summary_blocks, title=canvas_title)
+            log.info("HL canvas posted: %r (%d service(s)).", canvas_title, len(collected))
+            continue
+
+        # ── Non-DP groups ──────────────────────────────────────────────────────
         markdown = render_hl_canvas(
             group_name=group_name,
             reports=collected,
             title=canvas_title,
             uaa_biz_metrics=uaa_biz_metrics         if is_uaa else None,
             central_biz_metrics=central_biz_metrics if is_cen else None,
-            dp_biz_metrics=dp_biz_metrics           if is_dp  else None,
-            dp_l0_report=dp_l0_report               if is_dp  else None,
-            emr_report=emr_report                   if is_dp  else None,
             connector_health=connector_health       if is_dp  else None,
             airflow_health=airflow_health           if is_dp  else None,
             uks_metrics=uks_metrics                 if is_uks else None,

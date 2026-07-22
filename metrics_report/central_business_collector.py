@@ -34,13 +34,18 @@ class BusinessMetric:
 
 
 async def collect_business_metrics(vm: VMClient) -> list[BusinessMetric]:
-    """Run all queries from central_business.json; skip entries that return no data."""
+    """Run all queries from central_business.json; skip entries that return no data.
+
+    Queries are issued with a concurrency cap (_SEM_LIMIT) to avoid bursting
+    VictoriaMetrics with O(100) simultaneous requests and triggering 429s.
+    """
     path = _PROJECT_ROOT / "central_business.json"
     if not path.exists():
         log.warning("central_business.json not found at %s", path)
         return []
 
     entries: list[dict] = json.loads(path.read_text())
+    _sem = asyncio.Semaphore(10)  # max 10 in-flight at once; avoids 429 burst
 
     async def run_one(entry: dict) -> list[BusinessMetric]:
         taglist = entry.get("taglist")
@@ -55,7 +60,8 @@ async def collect_business_metrics(vm: VMClient) -> list[BusinessMetric]:
 
         if taglist:
             try:
-                pairs = await vm.query_vector(entry["query"], id_label=taglist)
+                async with _sem:
+                    pairs = await vm.query_vector(entry["query"], id_label=taglist)
             except Exception as exc:
                 log.warning("Business metric query failed [%s]: %s", entry["query_name"], exc)
                 return []
@@ -72,7 +78,8 @@ async def collect_business_metrics(vm: VMClient) -> list[BusinessMetric]:
             ]
 
         try:
-            val = await vm.query(entry["query"])
+            async with _sem:
+                val = await vm.query(entry["query"])
         except Exception as exc:
             log.warning("Business metric query failed [%s]: %s", entry["query_name"], exc)
             return []

@@ -1015,26 +1015,47 @@ def _render_l2_central(central_biz: list[Any]) -> list[str]:
 
 
 def _render_l2_dp(dp_biz: Optional[list[Any]], emr: Any) -> list[str]:
+    """Render DP L2 — CDC validation failures, view staleness, compaction needs, full EMR tables."""
     lines: list[str] = []
 
+    # ── CDC / DP business failure detail ──────────────────────────────────────
+    # Per the design doc: CDC offset validation, base refresh failures, view staleness,
+    # compaction needed, DBZ invalid tables — all rendered when value > 0.
     if dp_biz:
         by_sec: dict[str, list[Any]] = defaultdict(list)
         for m in dp_biz:
             by_sec[m.section].append(m)
 
-        for section_name in ("Validation", "View Health", "Compaction"):
+        # Ordered per the doc: Validation → CDC Health → View Health → Compaction → Table Recency
+        _DP_L2_SECTIONS = (
+            "Validation",    # offset mismatch, full validation needed, stale validation
+            "CDC Health",    # DBZ invalid / base not refreshed, base refresh overdue
+            "View Health",   # views not updated >60d
+            "Compaction",    # file growth >300 in 3d
+            "Table Recency", # stale / null CDC tables (shown here when > 0)
+        )
+        for section_name in _DP_L2_SECTIONS:
             for m in by_sec.get(section_name, []):
                 if m.metric_type == "failure_count" and m.value > 0 and m.details:
-                    lines += [f"### {m.display_name}", ""]
-                    for item in m.details[:20]:
+                    lines += [f"### {m.display_name} ({int(m.value)} table(s))", ""]
+                    for item in m.details[:30]:
                         lines.append(f"- `{item}`")
-                    if len(m.details) > 20:
-                        lines.append(f"_+{len(m.details) - 20} more_")
+                    if len(m.details) > 30:
+                        lines.append(f"_+{len(m.details) - 30} more_")
                     lines.append("")
 
+    # ── EMR cube full tables — always rendered for DP (per design doc) ─────────
+    # Sections per design doc:
+    #   Cube Health Overview, Staleness, Memory Top 10, Execution Time, Schedule Delay
+    #   (CPU and Row Growth also rendered if present)
     if emr and emr.sections:
         for section in emr.sections:
-            if not section.rows or section.failed or not section.headers:
+            if section.failed or not section.headers:
+                # Still emit a note so the reader knows the query failed
+                lines += [f"### EMR — {section.title}", "", "_⚠️ Query failed — no data_", ""]
+                continue
+            if not section.rows:
+                lines += [f"### EMR — {section.title}", "", "_No rows returned_", ""]
                 continue
             lines += [f"### EMR — {section.title}", ""]
             lines += [
@@ -1161,7 +1182,18 @@ def render_hl_canvas(
     connector_health: Optional[KafkaConnectHealth] = None,
     airflow_health: Optional[AirflowHealth] = None,
     uks_metrics: Optional[Any] = None,
+    include_l2: bool = True,
+    l2_canvas_note: str = "",
 ) -> str:
+    """Render the main HL canvas.
+
+    Args:
+        include_l2: Set False to omit the L2 section (e.g. when posting L2 as a
+            separate canvas).  A brief note is appended so readers know where to
+            look.
+        l2_canvas_note: If ``include_l2`` is False and this is non-empty, the note
+            is included as a blockquote pointing to the separate L2 canvas.
+    """
     flags: list[tuple[int, str]] = []
 
     l0 = _render_l0(
@@ -1194,8 +1226,15 @@ def render_hl_canvas(
     parts = [attn, "", "---", "", l0]
     if l1:
         parts += ["", "---", "", l1]
-    if l2:
+
+    if include_l2 and l2:
         parts += ["", "---", "", l2]
+    elif not include_l2:
+        # L2 is being posted as a separate canvas — add a signpost so readers
+        # know it exists and where to look.
+        note = l2_canvas_note or "→ L2 Deep Analysis is available as a separate canvas posted below."
+        parts += ["", "---", "", f"> {note}"]
+
     parts += [
         "", "---", "",
         "🟢 Healthy   🟡 Warning   🔴 Critical   ·   "
@@ -1205,3 +1244,43 @@ def render_hl_canvas(
     ]
 
     return header + "\n".join(parts)
+
+
+# ── Public: standalone DP L2 canvas ───────────────────────────────────────────
+
+def render_dp_l2_canvas(
+    dp_biz_metrics: Optional[list[Any]],
+    emr_report: Optional[Any],
+    title: str = "",
+    date_str: str = "",
+) -> str:
+    """Render a self-contained DP L2 Deep Analysis canvas.
+
+    Used when the main Data Platform canvas overflows the Slack size limit and
+    L2 needs to be posted separately.  The canvas is fully stand-alone — it
+    opens with a header and ends with the legend, so it reads coherently on its
+    own.
+
+    Returns:
+        Canvas markdown string.  Empty string when there is nothing to render.
+    """
+    content = _render_l2_dp(dp_biz_metrics, emr_report)
+    if not content:
+        return ""
+
+    header_parts = ["## L2 — Deep Analysis  ·  Data Platform"]
+    if date_str:
+        header_parts.append(f"_Root cause / historical context — {date_str}_")
+    else:
+        header_parts.append("_Root cause / historical context — drill when L1 doesn't fully explain_")
+    header_parts += ["", "---", ""]
+
+    footer = [
+        "", "---", "",
+        "_🟢 Healthy   🟡 Warning   🔴 Critical   ·   "
+        "Companion to the Data Platform — Health Overview canvas   ·   "
+        "brightmoney observability_",
+    ]
+
+    lines = header_parts + content + footer
+    return "\n".join(lines)
