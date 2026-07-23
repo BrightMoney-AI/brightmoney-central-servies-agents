@@ -39,55 +39,53 @@ log = logging.getLogger(__name__)
 
 
 async def _scheduled(group: str | None) -> None:
-    from .scheduler import create_scheduler
+    # Legacy detailed-report scheduler is disabled — only HL + L0 run on schedule.
+    # from .scheduler import create_scheduler
     from .hl_scheduler import create_hl_scheduler
     from .config import settings
 
-    scheduler = create_scheduler(group=group)
-    scheduler.start()
-    label = f"group={group!r}" if group else "all groups"
-    log.info("Scheduler started — detailed report fires daily at 10:00 IST (04:30 UTC) [%s]. Ctrl-C to stop.", label)
+    # scheduler = create_scheduler(group=group)
+    # scheduler.start()
+    # label = f"group={group!r}" if group else "all groups"
+    # log.info("Scheduler started — detailed report fires daily at 10:00 IST (04:30 UTC) [%s]. Ctrl-C to stop.", label)
 
-    if settings.slack_hl_channel_id and group is None:
+    hl_scheduler = None
+    if settings.slack_hl_channel_id or settings.slack_l0_channel_id:
         hl_scheduler = create_hl_scheduler()
         hl_scheduler.start()
         log.info(
-            "HL scheduler started — HL report + L0 manager snapshot fire at 10:00 IST "
+            "HL + L0 scheduler started — fires daily at 04:30 UTC "
             "(HL channel: %s  L0 channel: %s).",
-            settings.slack_hl_channel_id,
+            settings.slack_hl_channel_id or "disabled",
             settings.slack_l0_channel_id or "disabled",
         )
     else:
-        hl_scheduler = None
+        log.warning("No HL or L0 channel configured — nothing scheduled.")
 
     try:
         while True:
             await asyncio.sleep(3600)
     except (KeyboardInterrupt, SystemExit):
-        scheduler.shutdown()
         if hl_scheduler:
             hl_scheduler.shutdown()
         log.info("Scheduler stopped.")
 
 
 async def _now(group: str | None) -> None:
-    """Fire all reports in priority order: L0 → HL → legacy detailed.
+    """Fire L0 + HL reports immediately (legacy detailed report is disabled).
 
     L0 manager snapshots post first so managers get the quick health verdict
-    immediately.  HL canvases (full L0/L1/L2 detail) follow.  The legacy
-    per-service detailed report posts last.
+    immediately.  HL canvases (full L0/L1/L2 detail) follow.
     """
-    from .scheduler import run_report
+    # from .scheduler import run_report   # legacy — disabled
     from .hl_scheduler import run_hl_report
     from .config import settings
 
-    # run_hl_report now posts L0 snapshots first, then HL canvases.
-    # Skip if a single-group run was requested: the manager snapshot needs all groups.
-    if (settings.slack_hl_channel_id or settings.slack_l0_channel_id) and group is None:
-        await run_hl_report()
+    # run_hl_report posts L0 snapshots first, then HL canvases.
+    await run_hl_report()
 
-    # Legacy detailed per-service report runs last
-    await run_report(group=group)
+    # Legacy detailed per-service report — disabled.
+    # await run_report(group=group)
 
 
 if __name__ == "__main__":
