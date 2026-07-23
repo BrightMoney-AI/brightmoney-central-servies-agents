@@ -20,7 +20,7 @@ from .pagerduty import fire_alert
 
 log = logging.getLogger(__name__)
 
-# Latest run per dp_* DAG — DISTINCT ON is PostgreSQL-specific, which is fine here.
+# Latest run per dp_* DAG — DISTINCT ON is PostgreSQL-specific, which is fine here
 _QUERY = text("""
 SELECT DISTINCT ON (dag_id)
     dag_id,
