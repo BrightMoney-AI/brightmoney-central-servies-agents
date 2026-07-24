@@ -56,8 +56,11 @@ class ApiMetrics:
     throughput_rps:              float
     success_rate_pct:            float
     error_rate_pct:              float
-    avg_latency_p50_ms:          int
+    avg_latency_p50_ms:          int             # 24h avg — used for spike detection
     avg_latency_baseline_ms:     Optional[float] = None  # 7-day baseline
+    avg_latency_current_ms:      Optional[int]   = None  # 1h window — shows live state
+    # (start_ist, end_ist, peak_ms) of the anomalous window within the last 24h, or None
+    latency_spike_window:        Optional[tuple[str, str, float]] = None
     success_rate_baseline_pct:   Optional[float] = None  # 7-day baseline
     error_rate_baseline_pct:     Optional[float] = None  # 7-day baseline
 

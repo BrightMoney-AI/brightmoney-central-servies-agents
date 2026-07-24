@@ -107,11 +107,31 @@ def _fmt_latency(report: L0Report) -> str:
         return "—"
     icon = "🔴" if val >= 1000 else ("🟡" if val >= 500 else "🟢")
     base = report.api.avg_latency_baseline_ms
+
+    # Build the primary "24h avg" portion
     if base is not None and base > 0:
         ratio = val / base
         if ratio >= 1.3:
-            return f"{icon} {val:.0f}ms (▲{ratio:.1f}×)"
-    return f"{icon} {val:.0f}ms"
+            primary = f"{icon} {val:.0f}ms (▲{ratio:.1f}×)"
+        else:
+            primary = f"{icon} {val:.0f}ms"
+    else:
+        primary = f"{icon} {val:.0f}ms"
+
+    # Append live "now" (1h) so engineers can tell if the spike is resolved or ongoing.
+    cur = report.api.avg_latency_current_ms
+    if cur is not None and cur > 0:
+        cur_icon = "🔴" if cur >= 1000 else ("🟡" if cur >= 500 else "✅")
+        primary += f" · now {cur:.0f}ms {cur_icon}"
+
+    # Append spike time window when anomaly was detected, e.g.:
+    # "🔴 1779ms (▲2.2×) · now 95ms ✅ · spike 5:30 AM–9:00 AM IST (peak 3200ms)"
+    sw = report.api.latency_spike_window
+    if sw is not None:
+        start_s, end_s, peak_ms = sw
+        primary += f" · spike {start_s}–{end_s} (peak {peak_ms:.0f}ms)"
+
+    return primary
 
 
 # ── Overall scorecard ──────────────────────────────────────────────────────────

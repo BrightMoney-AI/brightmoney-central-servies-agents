@@ -257,9 +257,24 @@ def _render_l0_service(
             flags.append((0 if err_icon == "🔴" else 1, f"{err_icon} {svc_name} · L0 · Error Rate · {err_str}"))
 
         lat_str, lat_icon = _latency_trend(a.avg_latency_p50_ms, a.avg_latency_baseline_ms)
-        rows.append(("Latency P50", f"{lat_icon} {lat_str}"))
+        # Append live "now" (1h) alongside the 24h avg so engineers can tell
+        # instantly whether an anomaly is resolved or still active.
+        cur_lat = getattr(a, "avg_latency_current_ms", None)
+        if cur_lat is not None and cur_lat > 0:
+            cur_icon = "🔴" if cur_lat >= 1000 else ("🟡" if cur_lat >= 500 else "✅")
+            lat_str_full = f"{lat_str} · now {cur_lat}ms {cur_icon}"
+        else:
+            lat_str_full = lat_str
+
+        # Spike time window — when during the 24h was the anomaly?
+        sw = getattr(a, "latency_spike_window", None)
+        if sw is not None:
+            start_s, end_s, peak_ms = sw
+            lat_str_full += f" · spike {start_s}–{end_s} (peak {peak_ms:.0f}ms)"
+
+        rows.append(("Latency P50", f"{lat_icon} {lat_str_full}"))
         if lat_icon in ("🟡", "🔴"):
-            flags.append((0 if lat_icon == "🔴" else 1, f"{lat_icon} {svc_name} · L0 · Latency P50 · {lat_str}"))
+            flags.append((0 if lat_icon == "🔴" else 1, f"{lat_icon} {svc_name} · p50 {lat_str_full}"))
 
     lines.append("| Metric | Value |")
     lines.append("|---|---|")

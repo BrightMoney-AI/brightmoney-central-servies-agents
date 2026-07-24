@@ -177,6 +177,14 @@ def build_api_queries(
             promql=f"avg(avg_over_time(django_request_latency_seconds{s_p50}[{window}])) * 1000",
             unit="ms",
         ),
+        # Current latency — short 1h window shows live state independently of the
+        # 24h average.  Used in the canvas alongside the 24h avg so engineers can
+        # instantly see "was this a past spike (now resolved) or is it still ongoing?"
+        Query(
+            name="api_current_latency_ms",
+            promql=f"avg(avg_over_time(django_request_latency_seconds{s_p50}[1h])) * 1000",
+            unit="ms",
+        ),
         # 7-day baselines ending 24h ago — used to detect spikes vs normal operating range
         Query(
             name="api_avg_latency_baseline_ms",

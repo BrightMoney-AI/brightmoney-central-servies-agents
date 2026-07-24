@@ -5,8 +5,59 @@ Builds an L0Report from the raw MetricsReport, then delegates to renderer.render
 The public API (build_slack_payload) is unchanged — scheduler.py is unaffected.
 """
 from __future__ import annotations
-from datetime import datetime, timezone
+import time as _time
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _compute_latency_spike_window(
+    series: list[float],
+    baseline_ms: Optional[float],
+    step_mins: int = 30,
+) -> Optional[tuple[str, str, float]]:
+    """Identify when during the last 24h latency was anomalous.
+
+    Walks the already-collected 30-min spike_series for api_avg_latency_ms,
+    reconstructs approximate bucket timestamps from series index, and returns
+    the earliest start / latest end of windows that exceeded the warn threshold
+    (1.5× 7d baseline, or absolute avg_latency_warn_ms as fallback).
+
+    Returns (start_IST, end_IST, peak_ms) or None if no anomalous windows found.
+    No extra VM queries — reuses spike_series already fetched by collector.
+    """
+    if not series:
+        return None
+
+    threshold = (
+        baseline_ms * 1.5
+        if (baseline_ms and baseline_ms > 0)
+        else settings.avg_latency_warn_ms
+    )
+
+    now_ts   = int(_time.time())
+    step_s   = step_mins * 60
+    n        = len(series)
+
+    spike_pts: list[tuple[int, float]] = []
+    for i, val in enumerate(series):
+        # Oldest bucket is index 0; reconstruct its Unix timestamp.
+        ts = now_ts - (n - 1 - i) * step_s
+        if val > threshold:
+            spike_pts.append((ts, val))
+
+    if not spike_pts:
+        return None
+
+    start_ts = spike_pts[0][0]
+    end_ts   = spike_pts[-1][0] + step_s   # end of the last anomalous 30-min window
+    peak_ms  = max(val for _, val in spike_pts)
+
+    fmt      = "%I:%M %p IST"
+    start_s  = datetime.fromtimestamp(start_ts, tz=_IST).strftime(fmt).lstrip("0")
+    end_s    = datetime.fromtimestamp(end_ts,   tz=_IST).strftime(fmt).lstrip("0")
+    return start_s, end_s, peak_ms
 
 from .collector import MetricsReport
 from .config import settings
@@ -122,6 +173,13 @@ def to_l0_report(report: MetricsReport, service_name: str = "All Services", show
     error                 = v.get("api_error_rate_pct")
     avg_lat               = v.get("api_avg_latency_ms")
     avg_lat_baseline      = v.get("api_avg_latency_baseline_ms")
+    avg_lat_current       = v.get("api_current_latency_ms")
+
+    # Spike window — computed from already-collected range series, no extra VM query
+    latency_spike_window = _compute_latency_spike_window(
+        report.spike_series.get("api_avg_latency_ms", []),
+        avg_lat_baseline,
+    )
     success_baseline      = v.get("api_success_rate_baseline_pct")
     error_baseline        = v.get("api_error_rate_baseline_pct")
 
@@ -233,6 +291,8 @@ def to_l0_report(report: MetricsReport, service_name: str = "All Services", show
             error_rate_pct            = error   or 0.0,
             avg_latency_p50_ms        = int(avg_lat or 0),
             avg_latency_baseline_ms   = avg_lat_baseline,
+            avg_latency_current_ms    = int(avg_lat_current) if avg_lat_current is not None else None,
+            latency_spike_window      = latency_spike_window,
             success_rate_baseline_pct = success_baseline,
             error_rate_baseline_pct   = error_baseline,
         ),
