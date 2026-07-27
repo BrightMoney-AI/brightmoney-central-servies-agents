@@ -184,6 +184,23 @@ def _render_flagged(groups: dict[str, list[tuple[str, L0Report]]]) -> list[str]:
                 reasons.append(f"error rate {r.api.error_rate_pct:.2f}%")
             if r.api.avg_latency_p50_ms is not None and r.api.avg_latency_p50_ms >= 500:
                 reasons.append(f"p50 {r.api.avg_latency_p50_ms:.0f}ms")
+        # Endpoint P99 spikes are the most common silent driver of CRITICAL status:
+        # the service-level P50 can look fine while a single endpoint spikes.
+        # Surface the worst offender so the flags section explains itself.
+        _MIN_HITS = 100
+        ep_candidates = [
+            ep for ep in r.endpoints
+            if ep.p99_baseline_ms and ep.p99_baseline_ms > 0
+            and ep.p99_ms and ep.hits >= _MIN_HITS
+        ]
+        if ep_candidates:
+            worst = max(ep_candidates, key=lambda ep: ep.p99_ms / ep.p99_baseline_ms)
+            ratio = worst.p99_ms / worst.p99_baseline_ms
+            if ratio >= 1.5:
+                # Shorten long paths: show the last two meaningful segments
+                parts = [p for p in worst.path.split("/") if p]
+                short_path = "/" + "/".join(parts[-2:]) if len(parts) >= 2 else worst.path
+                reasons.append(f"ep p99 {ratio:.1f}× ({short_path})")
         return " · ".join(reasons) if reasons else "see full report"
 
     for grp, svc, r in crit:

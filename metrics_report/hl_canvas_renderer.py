@@ -144,6 +144,20 @@ def _table_from_metric(m: Any) -> list[str]:
 
 # ── Attention Required ─────────────────────────────────────────────────────────
 
+def _unique_svc_count(flags: list[tuple[int, str]], sev_filter) -> int:
+    """Count unique service names in flags matching the given severity predicate.
+
+    Flag text format: "🔴 SERVICE_NAME · LEVEL · METRIC · VALUE"
+    The first ` · `-delimited segment (after stripping the leading emoji) is the
+    service name.  Deduplicating on that gives us a service count, not a flag count.
+    """
+    return len({
+        _strip_status_emoji(t).split(" · ")[0].strip()
+        for sev, t in flags
+        if sev_filter(sev)
+    })
+
+
 def _render_scorecard(
     reports: list[tuple[str, L0Report]],
     flags: list[tuple[int, str]],
@@ -156,13 +170,15 @@ def _render_scorecard(
     """
     total = len(reports)
 
-    n_crit_flags = sum(1 for sev, _ in flags if sev == 0)
-    n_warn_flags = sum(1 for sev, _ in flags if sev >= 1)
-    svc_crit     = sum(1 for _, r in reports if r.status == Status.CRITICAL)
-    svc_warn     = sum(1 for _, r in reports if r.status == Status.WARNING)
+    # Count *unique services* in flags, not raw flag items, so a service with
+    # two flagged endpoints counts as one critical service, not two.
+    n_crit_svcs = _unique_svc_count(flags, lambda s: s == 0)
+    n_warn_svcs = _unique_svc_count(flags, lambda s: s >= 1)
+    svc_crit    = sum(1 for _, r in reports if r.status == Status.CRITICAL)
+    svc_warn    = sum(1 for _, r in reports if r.status == Status.WARNING)
 
-    has_crit = n_crit_flags > 0 or svc_crit > 0
-    has_warn = n_warn_flags > 0 or svc_warn > 0
+    has_crit = n_crit_svcs > 0 or svc_crit > 0
+    has_warn = n_warn_svcs > 0 or svc_warn > 0
 
     if has_crit:
         emoji, label = "🔴", "Action Required"
@@ -173,10 +189,10 @@ def _render_scorecard(
 
     head = f"{emoji} **{label}**"
     attn = []
-    if n_crit_flags:
-        attn.append(f"🔴 {n_crit_flags} critical")
-    if n_warn_flags:
-        attn.append(f"🟡 {n_warn_flags} warning")
+    if n_crit_svcs:
+        attn.append(f"🔴 {n_crit_svcs} critical")
+    if n_warn_svcs:
+        attn.append(f"🟡 {n_warn_svcs} warning")
     if attn:
         head += "  ·  " + " · ".join(attn)
 
@@ -203,20 +219,25 @@ def _render_attention(flags: list[tuple[int, str]]) -> str:
     crit = [t for sev, t in flags if sev == 0]
     warn = [t for sev, t in flags if sev >= 1]
 
+    # Count unique *services* (not individual flag items) for the header so it
+    # matches the L0 snapshot count (which counts unique services, not flags).
+    n_crit_svcs = len({_strip_status_emoji(t).split(" · ")[0].strip() for t in crit})
+    n_warn_svcs = len({_strip_status_emoji(t).split(" · ")[0].strip() for t in warn})
+
     counts = []
     if crit:
-        counts.append(f"🔴 {len(crit)} Critical")
+        counts.append(f"🔴 {n_crit_svcs} Critical")
     if warn:
-        counts.append(f"🟡 {len(warn)} Warning")
+        counts.append(f"🟡 {n_warn_svcs} Warning")
 
     lines = [f"## ⚠️ Attention Required   ·   " + " · ".join(counts), ""]
 
     if crit:
-        lines += [f"### 🔴 Critical ({len(crit)})", ""]
+        lines += [f"### 🔴 Critical ({n_crit_svcs} service{'s' if n_crit_svcs != 1 else ''}  ·  {len(crit)} flag{'s' if len(crit) != 1 else ''})", ""]
         lines += [f"- {_strip_status_emoji(t)}" for t in crit]
         lines.append("")
     if warn:
-        lines += [f"### 🟡 Warning ({len(warn)})", ""]
+        lines += [f"### 🟡 Warning ({n_warn_svcs} service{'s' if n_warn_svcs != 1 else ''}  ·  {len(warn)} flag{'s' if len(warn) != 1 else ''})", ""]
         lines += [f"- {_strip_status_emoji(t)}" for t in warn]
         lines.append("")
     return "\n".join(lines)
