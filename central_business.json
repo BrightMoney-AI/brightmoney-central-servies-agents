@@ -4,21 +4,21 @@
     "query_name": "mixpanel_single_event_success_rate_30",
     "section": "Mixpanel",
     "metric_type": "success_rate",
-    "query": "((sum(MIXPANEL_SINGLE_EVENT[24h]) - sum(MIXPANEL_SINGLE_EVENT_FAILED[24h]))*100)/(sum(MIXPANEL_SINGLE_EVENT[24h]))"
+    "query": "((sum(increase(MIXPANEL_SINGLE_EVENT[24h])) - sum(increase(MIXPANEL_SINGLE_EVENT_FAILED[24h])))*100)/(sum(increase(MIXPANEL_SINGLE_EVENT[24h])))"
   },
   {
     "display_name": "Mixpanel Total Single Events",
     "query_name": "mixpanel_total_single_events_26",
     "section": "Mixpanel",
     "metric_type": "total_count",
-    "query": "sum(MIXPANEL_SINGLE_EVENT[24h])"
+    "query": "sum(increase(MIXPANEL_SINGLE_EVENT[24h]))"
   },
   {
     "display_name": "Mixpanel Single Events Failed",
     "query_name": "mixpanel_single_events_failed_28",
     "section": "Mixpanel",
     "metric_type": "failure_count",
-    "query": "sum(MIXPANEL_SINGLE_EVENT_FAILED[24h])",
+    "query": "sum(increase(MIXPANEL_SINGLE_EVENT_FAILED[24h]))",
     "warn_above": 10000,
     "crit_above": 20000
   },
@@ -27,42 +27,42 @@
     "query_name": "mixpanel_batch_event_success_rate_24",
     "section": "Mixpanel",
     "metric_type": "success_rate",
-    "query": "((sum(MIXPANEL_BATCH_EVENT[24h]) - sum(MIXPANEL_BATCH_EVENT_FAILED[24h]))*100)/(sum(MIXPANEL_BATCH_EVENT[24h]))"
+    "query": "((sum(increase(MIXPANEL_BATCH_EVENT[24h])) - sum(increase(MIXPANEL_BATCH_EVENT_FAILED[24h])))*100)/(sum(increase(MIXPANEL_BATCH_EVENT[24h])))"
   },
   {
     "display_name": "Mixpanel Total Batch Events",
     "query_name": "mixpanel_total_batch_event_20",
     "section": "Mixpanel",
     "metric_type": "total_count",
-    "query": "sum(MIXPANEL_BATCH_EVENT[24h])"
+    "query": "sum(increase(MIXPANEL_BATCH_EVENT[24h]))"
   },
   {
     "display_name": "Mixpanel Batch Events Failed",
     "query_name": "mixpanel_total_batch_events_failed_22",
     "section": "Mixpanel",
     "metric_type": "failure_count",
-    "query": "sum(MIXPANEL_BATCH_EVENT_FAILED[24h])"
+    "query": "sum(increase(MIXPANEL_BATCH_EVENT_FAILED[24h]))"
   },
   {
     "display_name": "Mixpanel Forwarder API Events Success Rate",
     "query_name": "mixpanel_forwarder_api_events_success_rate_18",
     "section": "Mixpanel",
     "metric_type": "success_rate",
-    "query": "((sum(MIXPANEL_API_EVENTS[24h]) - sum(MIXPANEL_API_EVENTS_FAILED[24h]))*100)/(sum(MIXPANEL_API_EVENTS[24h]))"
+    "query": "((sum(increase(MIXPANEL_API_EVENTS[24h])) - sum(increase(MIXPANEL_API_EVENTS_FAILED[24h])))*100)/(sum(increase(MIXPANEL_API_EVENTS[24h])))"
   },
   {
     "display_name": "Mixpanel API Events Total",
     "query_name": "mixpanel_api_events_total_14",
     "section": "Mixpanel",
     "metric_type": "total_count",
-    "query": "sum(MIXPANEL_API_EVENTS[24h])"
+    "query": "sum(increase(MIXPANEL_API_EVENTS[24h]))"
   },
   {
     "display_name": "Mixpanel Forwarder API Events Failed",
     "query_name": "mixpanel_forwarder_api_events_failed_16",
     "section": "Mixpanel",
     "metric_type": "failure_count",
-    "query": "sum(MIXPANEL_API_EVENTS_FAILED[24h])"
+    "query": "sum(increase(MIXPANEL_API_EVENTS_FAILED[24h]))"
   },
   {
     "display_name": "API Upload Profile Success Rate",
@@ -83,7 +83,7 @@
     "query_name": "api_merge_profile_success_rate_50",
     "section": "Mixpanel",
     "metric_type": "success_rate",
-    "query": "round((sum(MIXPANEL_API_MERGE_PROFILE_SUCCESS[24h])/\nsum(MIXPANEL_API_MERGE_PROFILE_TOTAL[24h]))*100,0.001)"
+    "query": "round((sum(increase(MIXPANEL_API_MERGE_PROFILE_SUCCESS[24h]))/\nsum(increase(MIXPANEL_API_MERGE_PROFILE_TOTAL[24h])))*100,0.001)"
   },
   {
     "display_name": "API Merge Profile Failure",
@@ -97,7 +97,7 @@
     "query_name": "api_lp_click_add_profile_success_rate_51",
     "section": "Mixpanel",
     "metric_type": "success_rate",
-    "query": "round((sum(MIXPANEL_API_LP_CLICK_ADD_SUCCESS[24h])/\nsum(MIXPANEL_API_LP_CLICK_ADD_TOTAL[24h]))*100,0.001)"
+    "query": "round((sum(increase(MIXPANEL_API_LP_CLICK_ADD_SUCCESS[24h]))/\nsum(increase(MIXPANEL_API_LP_CLICK_ADD_TOTAL[24h])))*100,0.001)"
   },
   {
     "display_name": "API LP Click Add Profile Failure",
@@ -111,7 +111,7 @@
     "query_name": "api_lp_click_get_total_success_rate_49",
     "section": "Mixpanel",
     "metric_type": "success_rate",
-    "query": "(sum(MIXPANEL_API_LP_CLICKS_GET_SUCCESS[24h])/\nsum(MIXPANEL_API_LP_CLICKS_GET_TOTAL[24h]))*100"
+    "query": "(sum(increase(MIXPANEL_API_LP_CLICKS_GET_SUCCESS[24h]))/\nsum(increase(MIXPANEL_API_LP_CLICKS_GET_TOTAL[24h])))*100"
   },
   {
     "display_name": "API LP Clicks Get Failure",
@@ -125,7 +125,7 @@
     "query_name": "api_unvalidated_merge_success_rate_55",
     "section": "Mixpanel",
     "metric_type": "success_rate",
-    "query": "(sum(MIXPANEL_API_UNVALIDATED_MERGE_SUCCESS[24h])/\nsum(MIXPANEL_API_UNVALIDATED_MERGE_TOTAL[24h]))*100"
+    "query": "(sum(increase(MIXPANEL_API_UNVALIDATED_MERGE_SUCCESS[24h]))/\nsum(increase(MIXPANEL_API_UNVALIDATED_MERGE_TOTAL[24h])))*100"
   },
   {
     "display_name": "API Unvalidated Merge Failure",
@@ -153,7 +153,7 @@
     "query_name": "flow_batch_event_success_rate_64",
     "section": "Mixpanel",
     "metric_type": "success_rate",
-    "query": "(sum(MIXPANEL_FLOW_BATCH_EVENT_SUCCESS[24h]) / sum(MIXPANEL_FLOW_BATCH_EVENT_TOTAL[24h])) * 100"
+    "query": "(sum(increase(MIXPANEL_FLOW_BATCH_EVENT_SUCCESS[24h])) / sum(increase(MIXPANEL_FLOW_BATCH_EVENT_TOTAL[24h]))) * 100"
   },
   {
     "display_name": "Flow Batch Event Failure",
@@ -167,7 +167,7 @@
     "query_name": "flow_single_event_success_rate_62",
     "section": "Mixpanel",
     "metric_type": "success_rate",
-    "query": "round((sum(MIXPANEL_FLOW_SINGLE_EVENT_SUCCESS[24h]) / sum(MIXPANEL_FLOW_SINGLE_EVENT_TOTAL[24h])) * 100,0.01)"
+    "query": "round((sum(increase(MIXPANEL_FLOW_SINGLE_EVENT_SUCCESS[24h])) / sum(increase(MIXPANEL_FLOW_SINGLE_EVENT_TOTAL[24h]))) * 100,0.01)"
   },
   {
     "display_name": "Flow Single Event Failure",
@@ -197,7 +197,7 @@
     "query_name": "flow_user_property_success_rate_60",
     "section": "Mixpanel",
     "metric_type": "success_rate",
-    "query": "round((sum(increase(MIXPANEL_FLOW_USER_PROPERTY_SUCCESS)[24h]) / sum(increase(MIXPANEL_FLOW_USER_PROPERTY_TOTAL)[24h])) * 100,0.001)"
+    "query": "round((sum(increase(MIXPANEL_FLOW_USER_PROPERTY_SUCCESS[24h])) / sum(increase(MIXPANEL_FLOW_USER_PROPERTY_TOTAL[24h]))) * 100,0.001)"
   },
   {
     "display_name": "Flow User Property Failure",
@@ -211,7 +211,7 @@
     "query_name": "task_lp_click_event_success_rate_75",
     "section": "Mixpanel",
     "metric_type": "success_rate",
-    "query": "(sum(MIXPANEL_TASK_LP_CLICK_EVENT_SUCCESS[24h]) / sum(MIXPANEL_TASK_LP_CLICK_EVENT_TOTAL[24h])) * 100"
+    "query": "(sum(increase(MIXPANEL_TASK_LP_CLICK_EVENT_SUCCESS[24h])) / sum(increase(MIXPANEL_TASK_LP_CLICK_EVENT_TOTAL[24h]))) * 100"
   },
   {
     "display_name": "Task LP Click Event Failure",
@@ -225,7 +225,7 @@
     "query_name": "task_batch_event_success_rate_73",
     "section": "Mixpanel",
     "metric_type": "success_rate",
-    "query": "(sum(MIXPANEL_TASK_BATCH_EVENT_SUCCESS[24h]) / sum(MIXPANEL_TASK_BATCH_EVENT_TOTAL[24h])) * 100"
+    "query": "(sum(increase(MIXPANEL_TASK_BATCH_EVENT_SUCCESS[24h])) / sum(increase(MIXPANEL_TASK_BATCH_EVENT_TOTAL[24h]))) * 100"
   },
   {
     "display_name": "Task Batch Event Failure",
@@ -239,7 +239,7 @@
     "query_name": "task_single_event_success_rate_70",
     "section": "Mixpanel",
     "metric_type": "success_rate",
-    "query": "(sum(MIXPANEL_TASK_SINGLE_EVENT_SUCCESS[24h]) / sum(MIXPANEL_TASK_SINGLE_EVENT_TOTAL[24h])) * 100"
+    "query": "(sum(increase(MIXPANEL_TASK_SINGLE_EVENT_SUCCESS[24h])) / sum(increase(MIXPANEL_TASK_SINGLE_EVENT_TOTAL[24h]))) * 100"
   },
   {
     "display_name": "Task Single Event Failure",
@@ -330,48 +330,6 @@
     "warn_above": 250000
   },
   {
-    "display_name": "Batch Event Failed Count",
-    "query_name": "batch_event_failed_event_count_18",
-    "section": "Facebook",
-    "metric_type": "failure_count",
-    "query": "sum(FACEBOOK_BATCH_EVENT_FAILED[24h])"
-  },
-  {
-    "display_name": "DB Interface Error Count",
-    "query_name": "facebook_db_interface_error_count_24",
-    "section": "Facebook",
-    "metric_type": "failure_count",
-    "query": "sum(FACEBOOK_DB_INTERFACE_ERROR[24h])"
-  },
-  {
-    "display_name": "Multi Mapped Event Web",
-    "query_name": "facebook_multi_mapped_event_web_22",
-    "section": "Facebook",
-    "metric_type": "total_count",
-    "query": "sum(FACEBOOK_MULTI_EVENT_MAP_WEB{tag_name1=\"total\"}[24h])"
-  },
-  {
-    "display_name": "Multi Mapped Event App",
-    "query_name": "facebook_multi_mapped_event_app_20",
-    "section": "Facebook",
-    "metric_type": "total_count",
-    "query": "sum(FACEBOOK_MULTI_EVENT_MAP_APP{tag_name1=\"total\"}[24h])"
-  },
-  {
-    "display_name": "Web Event Total",
-    "query_name": "facebook_web_event_total_16",
-    "section": "Facebook",
-    "metric_type": "total_count",
-    "query": "sum(FACEBOOK_CONVERSIONS_WEB_EVENT{tag_name1=\"total\"}[24h])"
-  },
-  {
-    "display_name": "App Event Total",
-    "query_name": "facebook_app_event_total_14",
-    "section": "Facebook",
-    "metric_type": "total_count",
-    "query": "sum(FACEBOOK_CONVERSIONS_APP_EVENT{tag_name1=\"total\"}[24h])"
-  },
-  {
     "display_name": "App Event Success Rate",
     "query_name": "app_event_success_rate_2",
     "section": "Singular",
@@ -429,35 +387,35 @@
     "query_name": "clevertap_events_success_count_10",
     "section": "CleverTap",
     "metric_type": "total_count",
-    "query": "clevertap_event_success{deployment=\"prod\"}[24h]"
+    "query": "sum(increase(clevertap_event_success{deployment=\"prod\"}[24h]))"
   },
   {
     "display_name": "Events Fail Count",
     "query_name": "clevertap_events_fail_count_11",
     "section": "CleverTap",
     "metric_type": "failure_count",
-    "query": "(clevertap_event_success{deployment=\"prod\"}[24h])/((clevertap_event_fail{deployment=\"prod\"}[24h])+(clevertap_event_success{deployment=\"prod\"}[24h]))"
+    "query": "sum(increase(clevertap_event_fail{deployment=\"prod\"}[24h]))"
   },
   {
     "display_name": "Profile Update Fail Count",
     "query_name": "clevertap_profile_update_fail_count_21",
     "section": "CleverTap",
     "metric_type": "failure_count",
-    "query": "clevertap_update_profile_token{deployment=\"prod\"}[24h]"
+    "query": "sum(increase(clevertap_update_profile_token{deployment=\"prod\"}[24h]))"
   },
   {
     "display_name": "Profile Update Total",
     "query_name": "clevertap_profile_update_total_22",
     "section": "CleverTap",
     "metric_type": "total_count",
-    "query": "clevertap_update_profile_total{deployment=\"prod\"}[24h]"
+    "query": "sum(increase(clevertap_update_profile_total{deployment=\"prod\"}[24h]))"
   },
   {
     "display_name": "Single Event Count",
     "query_name": "clevertap_single_event_53",
     "section": "CleverTap",
     "metric_type": "total_count",
-    "query": "CLEVERTAP_SINGLE_EVENT[24h]"
+    "query": "sum(increase(CLEVERTAP_SINGLE_EVENT[24h]))"
   },
   {
     "display_name": "Push SMS Success Rate",
@@ -545,7 +503,7 @@
     "query_name": "email_sent_count_22",
     "section": "Email",
     "metric_type": "total_count",
-    "query": "sum(EMAIL_SENT[24h])"
+    "query": "sum(increase(EMAIL_SENT[24h]))"
   },
   {
     "display_name": "Email Failed Backoff Increase",
@@ -566,28 +524,28 @@
     "query_name": "ses_webhook_success_rate_18",
     "section": "Email",
     "metric_type": "success_rate",
-    "query": "sum(SES_WEBHOOK_HANDLED{tag_name0=\"success\"}[24h]) * 100 / (sum(SES_WEBHOOK_HANDLED{tag_name0=\"success\"}[24h]) + sum(SES_WEBHOOK_HANDLED_FAILED[24h]))"
+    "query": "sum(increase(SES_WEBHOOK_HANDLED{tag_name0=\"success\"}[24h])) * 100 / (sum(increase(SES_WEBHOOK_HANDLED{tag_name0=\"success\"}[24h])) + sum(increase(SES_WEBHOOK_HANDLED_FAILED[24h])))"
   },
   {
     "display_name": "SES Webhook Handled",
     "query_name": "ses_webhook_handled_16",
     "section": "Email",
     "metric_type": "total_count",
-    "query": "sum(SES_WEBHOOK_HANDLED{tag_name0=\"success\"}[24h])"
+    "query": "sum(increase(SES_WEBHOOK_HANDLED{tag_name0=\"success\"}[24h]))"
   },
   {
     "display_name": "Email Received Count",
     "query_name": "email_received_count_24",
     "section": "Email",
     "metric_type": "total_count",
-    "query": "sum(EMAIL_RECEIVED[24h])"
+    "query": "sum(increase(EMAIL_RECEIVED[24h]))"
   },
   {
     "display_name": "Email Send Success Rate",
     "query_name": "email_send_success_rate_30",
     "section": "Email Forwarder",
     "metric_type": "success_rate",
-    "query": "(sum(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"success\"}[24h]) * 100) / sum(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"total\"}[24h])",
+    "query": "(sum(increase(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"success\"}[24h])) * 100) / sum(increase(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"total\"}[24h]))",
     "warn_below": 94,
     "crit_below": 90
   },
@@ -605,28 +563,28 @@
     "query_name": "total_email_sends_event_26",
     "section": "Email Forwarder",
     "metric_type": "total_count",
-    "query": "sum(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"total\"}[24h])"
+    "query": "sum(increase(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"total\"}[24h]))"
   },
   {
     "display_name": "Emails Successfully Sent to EMS",
     "query_name": "total_email_successfully_sent_to_ems_28",
     "section": "Email Forwarder",
     "metric_type": "total_count",
-    "query": "sum(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"success\"}[24h])"
+    "query": "sum(increase(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"success\"}[24h]))"
   },
   {
     "display_name": "Celery Email Tasks Created",
     "query_name": "total_celery_email_sends_tasks_created_22",
     "section": "Email Forwarder",
     "metric_type": "total_count",
-    "query": "sum(EMAIL_FORWARDER_CELERY_EVENT_CREATED{tag_name1=\"created\"}[24h])"
+    "query": "sum(increase(EMAIL_FORWARDER_CELERY_EVENT_CREATED{tag_name1=\"created\"}[24h]))"
   },
   {
     "display_name": "Celery Failed Tasks",
     "query_name": "total_failed_tasks_24",
     "section": "Email Forwarder",
     "metric_type": "failure_count",
-    "query": "sum(EMAIL_FORWARDER_CELERY_EVENT_CREATED{tag_name1=\"failure\"}[24h])",
+    "query": "sum(increase(EMAIL_FORWARDER_CELERY_EVENT_CREATED{tag_name1=\"failure\"}[24h]))",
     "warn_above": 50,
     "crit_above": 100
   },
@@ -635,34 +593,16 @@
     "query_name": "total_notification_single_events_consumed_14",
     "section": "Email Forwarder",
     "metric_type": "total_count",
-    "query": "sum(EMAIL_FORWARDER_EVENT_CONSUMED{tag_name1=\"total\"}[24h])"
+    "query": "sum(increase(EMAIL_FORWARDER_EVENT_CONSUMED{tag_name1=\"total\"}[24h]))"
   },
   {
     "display_name": "Notification Events Not Processed",
     "query_name": "total_notification_events_not_processed_16",
     "section": "Email Forwarder",
     "metric_type": "failure_count",
-    "query": "sum(EMAIL_FORWARDER_EVENT_CONSUMED{tag_name1=\"failure\"}[24h])",
+    "query": "sum(increase(EMAIL_FORWARDER_EVENT_CONSUMED{tag_name1=\"failure\"}[24h]))",
     "warn_above": 500,
     "crit_above": 1000
-  },
-  {
-    "display_name": "Total Events Consumed",
-    "query_name": "total_events_consumed_18",
-    "section": "Email Forwarder",
-    "metric_type": "total_count",
-    "query": "sum(EMAIL_FORWARDER_EVENT_CONSUMED{tag_name1=\"total\"}[24h])",
-    "warn_above": 1000,
-    "crit_above": 5000
-  },
-  {
-    "display_name": "Total Events Not Processed",
-    "query_name": "total_events_not_processed_20",
-    "section": "Email Forwarder",
-    "metric_type": "failure_count",
-    "query": "sum(EMAIL_FORWARDER_EVENT_CONSUMED{tag_name1=\"failure\"}[24h])",
-    "warn_above": 500,
-    "crit_above": 500
   },
   {
     "display_name": "Firestore Ready Messages",
@@ -764,7 +704,7 @@
     "query_name": "batch_event_failed_event_count_18",
     "section": "Facebook",
     "metric_type": "failure_count",
-    "query": "sum by (name) (FACEBOOK_BATCH_EVENT_FAILED[24h])",
+    "query": "sum by (name) (increase(FACEBOOK_BATCH_EVENT_FAILED[24h]))",
     "taglist": "name"
   },
   {
@@ -772,7 +712,7 @@
     "query_name": "facebook_db_interface_error_count_24",
     "section": "Facebook",
     "metric_type": "failure_count",
-    "query": "sum by (name) (FACEBOOK_DB_INTERFACE_ERROR[24h])",
+    "query": "sum by (name) (increase(FACEBOOK_DB_INTERFACE_ERROR[24h]))",
     "taglist": "name"
   },
   {
@@ -780,7 +720,7 @@
     "query_name": "facebook_multi_mapped_event_web_22",
     "section": "Facebook",
     "metric_type": "total_count",
-    "query": "sum by (tag_name0) (FACEBOOK_MULTI_EVENT_MAP_WEB{tag_name1=\"total\"}[24h])",
+    "query": "sum by (tag_name0) (increase(FACEBOOK_MULTI_EVENT_MAP_WEB{tag_name1=\"total\"}[24h]))",
     "taglist": "tag_name0"
   },
   {
@@ -788,7 +728,7 @@
     "query_name": "facebook_multi_mapped_event_app_20",
     "section": "Facebook",
     "metric_type": "total_count",
-    "query": "sum by (tag_name0) (FACEBOOK_MULTI_EVENT_MAP_APP{tag_name1=\"total\"}[24h])",
+    "query": "sum by (tag_name0) (increase(FACEBOOK_MULTI_EVENT_MAP_APP{tag_name1=\"total\"}[24h]))",
     "taglist": "tag_name0"
   },
   {
@@ -796,7 +736,7 @@
     "query_name": "facebook_web_event_total_16",
     "section": "Facebook",
     "metric_type": "total_count",
-    "query": "sum by (tag_name0) (FACEBOOK_CONVERSIONS_WEB_EVENT{tag_name1=\"total\"}[24h])",
+    "query": "sum by (tag_name0) (increase(FACEBOOK_CONVERSIONS_WEB_EVENT{tag_name1=\"total\"}[24h]))",
     "taglist": "tag_name0"
   },
   {
@@ -804,7 +744,7 @@
     "query_name": "facebook_app_event_total_14",
     "section": "Facebook",
     "metric_type": "total_count",
-    "query": "sum by (tag_name0) (FACEBOOK_CONVERSIONS_APP_EVENT{tag_name1=\"total\"}[24h])",
+    "query": "sum by (tag_name0) (increase(FACEBOOK_CONVERSIONS_APP_EVENT{tag_name1=\"total\"}[24h]))",
     "taglist": "tag_name0"
   }
 ]
