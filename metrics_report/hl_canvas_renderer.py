@@ -852,10 +852,12 @@ def _render_l1_endpoints(
                 if ep.success_baseline_pct is not None:
                     drop = ep.success_baseline_pct - ep.success_pct
                     suc_str  = f"{ep.success_pct:.1f}% (▼ {abs(drop):.0f} pp vs 7d avg)"
-                    suc_icon = "🔴" if drop >= 10 else "🟡"
+                    suc_icon = ("🔴" if drop >= 10 or ep.success_pct < 95
+                                else "🟡" if drop >= 5 or ep.success_pct < 99
+                                else "🟢")
                 else:
                     suc_str  = f"{ep.success_pct:.1f}%"
-                    suc_icon = "🔴" if ep.success_pct < 80 else "🟡"
+                    suc_icon = "🔴" if ep.success_pct < 80 else ("🟡" if ep.success_pct < 99 else "🟢")
                 lat_str  = _fmt_p99(ep.p99_ms)
                 if ep.p99_baseline_ms and ep.p99_baseline_ms > 0:
                     ratio    = ep.p99_ms / ep.p99_baseline_ms
