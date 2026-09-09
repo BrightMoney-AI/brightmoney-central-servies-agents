@@ -494,6 +494,23 @@ async def run_hl_report() -> None:
                 except Exception as exc:
                     log.error("L0 group canvas failed [%r]: %s", grp_title, exc)
 
+    # ── Webhook Gateway canvas (L0 channel) ──────────────────────────────────
+    if settings.slack_l0_channel_id and settings.webhook_gw_enabled:
+        try:
+            from .webhook_gateway_collector import collect_webhook_gateway
+            from .webhook_gateway_renderer import (
+                render_webhook_gateway_canvas,
+                render_webhook_gateway_summary_blocks,
+            )
+            wh_report = await collect_webhook_gateway()
+            wh_title  = f"Webhook Gateway — Health Overview — {date_str}"
+            wh_md     = render_webhook_gateway_canvas(wh_report, date_str)
+            wh_blocks = render_webhook_gateway_summary_blocks(wh_report, date_str)
+            await _publish_l0_group_canvas(wh_md, wh_blocks, title=wh_title)
+            log.info("Webhook Gateway canvas posted.")
+        except Exception as exc:
+            log.error("Webhook Gateway canvas failed: %s", exc, exc_info=True)
+
     # ── HL Canvases SECOND — full L0/L1/L2 detail per group ───────────────────
     client = AsyncWebClient(token=settings.slack_bot_token)
 
@@ -698,6 +715,23 @@ async def run_l0_manager_only() -> None:
         log.info("L0 manager snapshots complete: %d group canvas(es) posted to %s.", posted, settings.slack_l0_channel_id)
     else:
         log.warning("L0 manager: no canvases posted — groups may be empty.")
+
+    # ── Webhook Gateway canvas ────────────────────────────────────────────────
+    if settings.webhook_gw_enabled:
+        try:
+            from .webhook_gateway_collector import collect_webhook_gateway
+            from .webhook_gateway_renderer import (
+                render_webhook_gateway_canvas,
+                render_webhook_gateway_summary_blocks,
+            )
+            wh_report = await collect_webhook_gateway()
+            wh_title  = f"Webhook Gateway — Health Overview — {date_str}"
+            wh_md     = render_webhook_gateway_canvas(wh_report, date_str)
+            wh_blocks = render_webhook_gateway_summary_blocks(wh_report, date_str)
+            await _publish_l0_group_canvas(wh_md, wh_blocks, title=wh_title)
+            log.info("Webhook Gateway canvas posted.")
+        except Exception as exc:
+            log.error("Webhook Gateway canvas failed: %s", exc, exc_info=True)
 
 
 def create_hl_scheduler() -> AsyncIOScheduler:

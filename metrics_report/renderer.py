@@ -36,11 +36,6 @@ def _endpoint_is_flagged(ep: Endpoint, t: FlaggingThresholds) -> bool:
             return True
     elif ep.p99_ms >= t.p99_warn_ms:
         return True
-    # Surface errors only when they're material: require ≥5 errors, or the
-    # success rate is already below the warn floor.  A single stray error on a
-    # 100 % endpoint is noise, not a signal worth putting in the Warning list.
-    if ep.errors is not None and ep.errors >= 5:
-        return True
     return False
 
 
@@ -120,12 +115,17 @@ def _flag_reasons(ep: Endpoint, t: FlaggingThresholds) -> list[str]:
             reasons.append(f"success dropped {drop:.0f}pp vs baseline")
         elif drop >= 5.0:
             reasons.append(f"success down {drop:.0f}pp vs baseline")
+        elif ep.success_pct < t.success_warn_pct:
+            # Absolute rate is bad even though drop vs baseline is small
+            reasons.append(f"low success rate ({ep.success_pct:.1f}%)")
     else:
         if ep.success_pct < 80:
             reasons.append("critical success rate")
         elif ep.success_pct < t.success_warn_pct:
             reasons.append("low success rate")
-    if ep.errors is not None and ep.errors > 0:
+    # Only surface "errors" when error rate is material (≥1% of hits).
+    # A handful of errors on a high-volume endpoint is rounding noise.
+    if ep.errors is not None and ep.errors > 0 and ep.hits > 0 and (ep.errors / ep.hits) >= 0.01:
         reasons.append("errors")
     return reasons
 

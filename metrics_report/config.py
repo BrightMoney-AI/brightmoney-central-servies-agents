@@ -51,6 +51,16 @@ class Settings(BaseSettings):
     # PagerDuty Events API v2 routing key (empty = alerts disabled)
     pagerduty_routing_key: str = ""
 
+    # AWS CloudWatch (IAM role auth — no explicit keys needed on EC2/ECS)
+    aws_region: str = "us-west-2"
+
+    # Webhook Gateway CloudWatch resource identifiers
+    webhook_gw_api_name:  str  = "prod-webhook-gateway-api-ha"
+    webhook_gw_event_bus: str  = "brightmoney-webhooks-prod"
+    webhook_gw_dlq_name:  str  = "webhook-eventbridge-dlq-prod"
+    webhook_gw_waf_name:  str  = "webhook-gateway-acl-prod"
+    webhook_gw_enabled:   bool = False   # set WEBHOOK_GW_ENABLED=true in Consul/env to enable
+
     @property
     def vm_base_url(self) -> str:
         base = self.vm_instance_entrypoint.rstrip("/")
