@@ -106,6 +106,11 @@ if __name__ == "__main__":
         help="Fire L0 manager snapshot only (all-groups overview to manager channel)",
     )
     parser.add_argument(
+        "--webhook-now",
+        action="store_true",
+        help="Fire Webhook Gateway canvas only (posts to SLACK_L0_CHANNEL_ID + SLACK_HL_CHANNEL_ID)",
+    )
+    parser.add_argument(
         "--group",
         metavar="GROUP",
         default=None,
@@ -121,7 +126,67 @@ if __name__ == "__main__":
 
     group = args.group or args.group_name
 
-    if args.l0_now:
+    if args.webhook_now:
+        async def _run_webhook() -> None:
+            from datetime import datetime, timedelta, timezone
+
+            from slack_sdk.web.async_client import AsyncWebClient
+            from slack_sdk.errors import SlackApiError
+
+            from metrics_report.config import settings
+            from metrics_report.webhook_gateway_collector import collect_webhook_gateway
+            from metrics_report.webhook_gateway_renderer import (
+                render_webhook_gateway_canvas,
+                render_webhook_gateway_summary_blocks,
+            )
+
+            IST = timezone(timedelta(hours=5, minutes=30))
+            date_str = datetime.now(IST).strftime("%d %b %Y")
+            channels = [ch for ch in [settings.slack_l0_channel_id, settings.slack_hl_channel_id] if ch]
+            if not channels:
+                channels = [settings.slack_channel_id]
+
+            log.info("Collecting Webhook Gateway metrics from CloudWatch...")
+            report = await collect_webhook_gateway()
+            title  = f"Webhook Gateway — Health Overview — {date_str}"
+            md     = render_webhook_gateway_canvas(report, date_str)
+            blocks = render_webhook_gateway_summary_blocks(report, date_str)
+            log.info("Canvas: %d chars  status=%s  collector_failures=%d", len(md), report.status.value, len(report.failures))
+
+            client = AsyncWebClient(token=settings.slack_bot_token)
+            try:
+                resp = await client.api_call(
+                    "canvases.create",
+                    json={"title": title, "document_content": {"type": "markdown", "markdown": md}},
+                )
+                canvas_id = resp.get("canvas_id", "")
+                log.info("Canvas created: canvas_id=%s", canvas_id)
+            except SlackApiError as exc:
+                log.error("Canvas create failed: %s", exc.response["error"])
+                return
+
+            canvas_url = ""
+            try:
+                auth = await client.auth_test()
+                canvas_url = f"{auth.get('url', '').rstrip('/')}/docs/{auth.get('team_id', '')}/{canvas_id}"
+            except SlackApiError:
+                pass
+
+            for ch in channels:
+                try:
+                    await client.chat_postMessage(channel=ch, text=f"📊 {title}", blocks=blocks)
+                    log.info("Summary posted to %s", ch)
+                except SlackApiError as exc:
+                    log.error("Summary post failed [%s]: %s", ch, exc.response["error"])
+                if canvas_url:
+                    try:
+                        await client.chat_postMessage(channel=ch, text=canvas_url, unfurl_links=True)
+                        log.info("Canvas card posted to %s: %s", ch, canvas_url)
+                    except SlackApiError as exc:
+                        log.error("Canvas card post failed [%s]: %s", ch, exc.response["error"])
+
+        asyncio.run(_run_webhook())
+    elif args.l0_now:
         from metrics_report.hl_scheduler import run_l0_manager_only
         asyncio.run(run_l0_manager_only())
         log.info("L0 manager snapshot complete.")

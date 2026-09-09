@@ -154,6 +154,68 @@ class AirflowHealth:
 
 
 @dataclass
+class WebhookPipelineMetrics:
+    """Size-check + MSK publisher pipeline health (Webhooks/Pipeline namespace)."""
+    eb_success_pct:  Optional[float]   # EB publish success % — 24h avg
+    msk_success_pct: Optional[float]   # MSK publish success % — 24h avg
+    api_dest_pct:    Optional[float]   # EventBridge API-dest delivery % — 24h avg
+    overflow_count:  int               # S3 overflow events in 24h
+    invalid_count:   int               # MSK unparseable events in 24h
+
+
+@dataclass
+class WebhookInfraMetrics:
+    """API Gateway + E2E latency metrics."""
+    apigw_5xx_pct:        Optional[float]  # 24h avg 5XX error rate
+    apigw_4xx_pct:        Optional[float]  # 24h avg 4XX error rate
+    apigw_throughput:     int              # total requests in 24h
+    e2e_latency_p99_ms:   Optional[float]  # max E2E p99 latency ms (24h)
+    apigw_latency_p99_ms: Optional[float]  # max API GW p99 latency ms (24h)
+
+
+@dataclass
+class WebhookDlqMetrics:
+    depth_now:    int            # current visible messages
+    age_oldest_s: Optional[int]  # age of oldest message in seconds
+
+
+@dataclass
+class WebhookWafMetrics:
+    block_pct:     Optional[float]  # 24h block %
+    blocked_total: int              # total blocked requests in 24h
+    rules:         dict             # {rule_name: int blocked_count}
+
+
+@dataclass
+class WebhookSlugMetrics:
+    slug:            str
+    eb_success_pct:  Optional[float]  # 24h avg %
+    msk_success_pct: Optional[float]  # 24h avg %
+
+
+@dataclass
+class WebhookLambdaMetrics:
+    name:         str             # e.g. "webhook-size-check-prod"
+    errors:       int             # total 24h
+    throttles:    int             # total 24h
+    duration_p99: Optional[float] # avg p99 ms (24h)
+    invocations:  int             # total 24h
+
+
+@dataclass
+class WebhookGatewayReport:
+    pipeline:    WebhookPipelineMetrics
+    infra:       WebhookInfraMetrics
+    dlq:         WebhookDlqMetrics
+    waf:         WebhookWafMetrics
+    slugs:       list[WebhookSlugMetrics]
+    lambdas:     list[WebhookLambdaMetrics]
+    reported_at: datetime
+    status:      Status = Status.UNKNOWN
+    failures:    list[str] = field(default_factory=list)
+
+
+@dataclass
 class L0Report:
     service:              str
     reported_at:          datetime
