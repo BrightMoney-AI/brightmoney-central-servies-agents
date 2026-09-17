@@ -546,8 +546,8 @@
     "section": "Email Forwarder",
     "metric_type": "success_rate",
     "query": "(sum(increase(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"success\"}[24h])) * 100) / sum(increase(EMAIL_FORWARDER_TEMPLATES{tag_name1=\"total\"}[24h]))",
-    "warn_below": 94,
-    "crit_below": 90
+    "warn_below": 90,
+    "crit_below": 85
   },
   {
     "display_name": "Forwarder Combined Success Rate",
