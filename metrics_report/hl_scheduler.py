@@ -717,7 +717,9 @@ async def run_l0_manager_only() -> None:
         log.warning("L0 manager: no canvases posted — groups may be empty.")
 
     # ── Webhook Gateway canvas ────────────────────────────────────────────────
-    if settings.webhook_gw_enabled:
+    if not settings.webhook_gw_enabled:
+        log.info("Webhook Gateway canvas skipped — WEBHOOK_GW_ENABLED is not set.")
+    else:
         try:
             from .webhook_gateway_collector import collect_webhook_gateway
             from .webhook_gateway_renderer import (
