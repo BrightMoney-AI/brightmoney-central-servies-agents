@@ -482,7 +482,12 @@ def _emr_summary_blocks(report: object, date_str: str) -> list[dict]:
 
     flagged_sections = [s for s in r.sections if s.flag_count > 0]
     if flagged_sections:
-        lines = [f"🔴 *{s.title}* — {s.flag_count} flagged" for s in flagged_sections[:8]]
+        from .hl_canvas_renderer import _name_list
+        lines = [
+            f"🔴 *{s.title}* — {s.flag_count} flagged: "
+            f"{_name_list([row.cells[0] for row in s.rows if row.flagged and row.cells])}"
+            for s in flagged_sections[:8]
+        ]
         if len(flagged_sections) > 8:
             lines.append(f"_+{len(flagged_sections) - 8} more_")
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(lines)}})

@@ -72,10 +72,10 @@ def _fmt_value(m: BusinessMetric) -> str:
     if m.metric_type == "success_rate":
         return f"{_rate_emoji(m)} {m.value:.2f}%"
     if m.metric_type == "failure_count":
-        return f"{_failure_emoji(m)} {m.value:.0f}"
+        return f"{_failure_emoji(m)} {m.value:,.0f}"
     if m.metric_type == "rate":
         return f"{m.value:.3f}"
-    return f"{m.value:.0f}"
+    return f"{m.value:,.0f}"
 
 
 def _is_flagged(m: BusinessMetric) -> bool:
@@ -96,6 +96,17 @@ def _is_critical(m: BusinessMetric) -> bool:
         _, crit = _failure_thresholds(m)
         return m.value > crit
     return False
+
+
+def _threshold_label(m: BusinessMetric) -> str:
+    """Short "which limit was crossed" text for a flagged metric."""
+    if m.metric_type == "success_rate":
+        warn, crit = _rate_thresholds(m)
+        return f"crit < {crit:g}%" if _is_critical(m) else f"warn < {warn:g}%"
+    if m.metric_type == "failure_count":
+        warn, crit = _failure_thresholds(m)
+        return f"crit > {crit:,.0f}" if _is_critical(m) else f"warn > {warn:,.0f}"
+    return "—"
 
 
 def _section_worst_emoji(metrics: list[BusinessMetric]) -> str:
@@ -132,10 +143,10 @@ def _render_section(section: str, items: list[BusinessMetric]) -> str:
     lines.append(f"### {sec_emoji} {section} · {len(flagged)} flagged")
     lines.append("")
 
-    lines.append("| Metric | Value |")
-    lines.append("|---|---|")
-    for m in flagged:
-        lines.append(f"| {m.display_name} | {_fmt_value(m)} |")
+    lines.append("| Metric | Value | Threshold |")
+    lines.append("|---|---|---|")
+    for m in sorted(flagged, key=lambda f: not _is_critical(f)):
+        lines.append(f"| {m.display_name} | {_fmt_value(m)} | {_threshold_label(m)} |")
     lines.append("")
 
     if healthy_checks:
