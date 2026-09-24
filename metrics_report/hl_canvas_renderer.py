@@ -612,7 +612,7 @@ def _render_l0_dp(
                 n = int(m.value)
                 icon = "🔴" if n > 0 else "🟢"
                 if n > 0:
-                    flags.append((0, f"🔴 DP · L0 · Stale CDC Tables · {n} stale"))
+                    flags.append((0, f"🔴 DP · L0 · Stale CDC Tables · {n} stale{_detail_suffix(m.details)}"))
                 rows.append(f"| Stale CDC Tables | {n} | {icon} |")
                 break
 
@@ -623,7 +623,7 @@ def _render_l0_dp(
                 n = int(m.value)
                 icon = "🔴" if n > 0 else "🟢"
                 if n > 0:
-                    flags.append((0, f"🔴 DP · L0 · DBZ Invalid Tables · {n} invalid"))
+                    flags.append((0, f"🔴 DP · L0 · DBZ Invalid Tables · {n} invalid{_detail_suffix(m.details)}"))
                 rows.append(f"| DBZ Invalid Tables | {n} | {icon} |")
                 break
 
@@ -632,7 +632,7 @@ def _render_l0_dp(
                 n = int(m.value)
                 icon = "🔴" if n > 0 else "🟢"
                 if n > 0:
-                    flags.append((0, f"🔴 DP · L0 · Compaction Needed · {n} tables"))
+                    flags.append((0, f"🔴 DP · L0 · Compaction Needed · {n} tables{_detail_suffix(m.details)}"))
                 rows.append(f"| Compaction Needed | {n} | {icon} |")
                 break
 
@@ -643,7 +643,8 @@ def _render_l0_dp(
             n = cube_sec.flag_count
             icon = "🔴" if n > 0 else "🟢"
             if n > 0:
-                flags.append((0, f"🔴 DP · L0 · EMR Cube Breaches · {n} breached"))
+                breached = [r.cells[0] for r in cube_sec.rows if r.flagged and r.cells]
+                flags.append((0, f"🔴 DP · L0 · EMR Cube Breaches · {n} breached: {_name_list(breached)}"))
             rows.append(f"| EMR Cube Breaches | {n} | {icon} |")
 
     # CDC aggregate lag trend — count sinks lagging vs their own normal, not raw sums
@@ -656,11 +657,13 @@ def _render_l0_dp(
             trend_str = f"{n_crit} sink(s) critically lagging"
             if n_warn:
                 trend_str += f" · {n_warn} rising"
-            flags.append((0, f"🔴 DP · L0 · CDC Lag Trend · {trend_str}"))
+            crit_sinks = [_short_sink(s.sink) for s in all_sinks if s.status == "critical"]
+            flags.append((0, f"🔴 DP · L0 · CDC Lag Trend · {trend_str}: {_name_list(crit_sinks)}"))
         elif n_warn:
             icon      = "🟡"
             trend_str = f"{n_warn} sink(s) rising above normal"
-            flags.append((1, f"🟡 DP · L0 · CDC Lag Trend · {trend_str}"))
+            warn_sinks = [_short_sink(s.sink) for s in all_sinks if s.status == "warning"]
+            flags.append((1, f"🟡 DP · L0 · CDC Lag Trend · {trend_str}: {_name_list(warn_sinks)}"))
         else:
             icon      = "🟢"
             trend_str = "all sinks within normal range"
@@ -673,7 +676,8 @@ def _render_l0_dp(
         n_ok     = sum(1 for r in all_runs if r.state == "success")
         icon     = "🔴" if n_failed > 0 else "🟢"
         if n_failed > 0:
-            flags.append((0, f"🔴 DP · L0 · Airflow DAGs · {n_failed} failed"))
+            failed_dags = sorted({r.dag_id for r in all_runs if r.state == "failed"})
+            flags.append((0, f"🔴 DP · L0 · Airflow DAGs · {n_failed} failed: {_name_list(failed_dags)}"))
         rows.append(f"| Airflow DAGs | {n_ok} ok / {n_failed} failed | {icon} |")
 
     if not rows:
@@ -744,6 +748,47 @@ def _render_l0(
     return "\n".join(lines)
 
 
+def _name_list(names: list[str], limit: int = 3) -> str:
+    """Join names for a one-line flag: "a, b, c +2 more"."""
+    names = [n for n in names if n]
+    extra = len(names) - limit
+    return ", ".join(names[:limit]) + (f" +{extra} more" if extra > 0 else "")
+
+
+def _detail_suffix(details: list[str]) -> str:
+    """": tbl_a, tbl_b +3 more" from DP BusinessMetric.details; drops "  (+N files)" annotations."""
+    names = [d.split("  (")[0].strip() for d in (details or [])]
+    listed = _name_list(names)
+    return f": {listed}" if listed else ""
+
+
+def _central_breach(m: Any) -> Optional[tuple[int, str]]:
+    """(severity, threshold label) for the first explicit threshold *m* breaches, else None.
+
+    Severity follows the flags convention: 0 = critical, 1 = warning.
+    """
+    v   = m.value
+    pct = "%" if m.metric_type == "success_rate" else ""
+    ca, wa = getattr(m, "crit_above", None), getattr(m, "warn_above", None)
+    cb, wb = getattr(m, "crit_below", None), getattr(m, "warn_below", None)
+    if ca is not None and v >= ca:
+        return 0, f"crit ≥ {ca:,.0f}{pct}"
+    if cb is not None and v <= cb:
+        return 0, f"crit ≤ {cb:,.0f}{pct}"
+    if wa is not None and v >= wa:
+        return 1, f"warn ≥ {wa:,.0f}{pct}"
+    if wb is not None and v <= wb:
+        return 1, f"warn ≤ {wb:,.0f}{pct}"
+    return None
+
+
+def _short_check_name(display_name: str, section: str) -> str:
+    """Drop a redundant section prefix: "Mixpanel Single Events Failed" → "Single Events Failed"."""
+    if display_name.lower().startswith(section.lower() + " "):
+        return display_name[len(section) + 1:]
+    return display_name
+
+
 def _render_l0_central_scorecard(central_biz: list[Any], flags: list[tuple[int, str]]) -> list[str]:
     if not central_biz:
         return []
@@ -754,21 +799,30 @@ def _render_l0_central_scorecard(central_biz: list[Any], flags: list[tuple[int, 
 
     lines = ["### Business Metrics Scorecard — Central", ""]
     for section, items in sorted(by_sec.items()):
-        flagged = [
-            m for m in items
-            if (
-                (getattr(m, "crit_above", None) is not None and m.value >= m.crit_above)
-                or (getattr(m, "warn_above", None) is not None and m.value >= m.warn_above)
-                or (getattr(m, "crit_below", None) is not None and m.value <= m.crit_below)
-                or (getattr(m, "warn_below", None) is not None and m.value <= m.warn_below)
-            )
-        ]
-        n_flag  = len(flagged)
+        breaches = [(m, b) for m in items if (b := _central_breach(m)) is not None]
+        breaches.sort(key=lambda mb: mb[1][0])   # criticals first
+        n_flag  = len(breaches)
         n_total = len(items)
-        icon    = "🔴" if n_flag > 0 else "🟢"
-        if n_flag > 0:
-            flags.append((0, f"🔴 Central · L0 · {section} · {n_flag}/{n_total} checks flagged"))
+
+        if not breaches:
+            lines.append(f"- 🟢 **{section}** — {n_total}/{n_total} checks healthy")
+            continue
+
+        sev  = min(b[0] for _, b in breaches)
+        icon = "🔴" if sev == 0 else "🟡"
+        failed_desc = _name_list([
+            f"{_short_check_name(m.display_name, section)} {_fmt_business_value(m)}"
+            for m, _ in breaches
+        ])
+        flags.append((sev, f"{icon} Central · L0 · {section} · {n_flag}/{n_total} flagged: {failed_desc}"))
+
         lines.append(f"- {icon} **{section}** — {n_total - n_flag}/{n_total} checks healthy")
+        for m, (m_sev, threshold) in breaches:
+            m_icon = "🔴" if m_sev == 0 else "🟡"
+            lines.append(
+                f"  - {m_icon} {_short_check_name(m.display_name, section)} · "
+                f"**{_fmt_business_value(m)}** _({threshold})_"
+            )
 
     lines.append("")
     return lines
@@ -1146,7 +1200,9 @@ def _render_l1_dp(
     if airflow and (airflow.dag_runs or airflow.pipeline_runs or airflow.view_flow):
         lines += _render_l1_airflow(airflow)
         if airflow.view_flow and airflow.view_flow.failed:
-            flags.append((0, f"🔴 DP · L1 · View Flow · {len(airflow.view_flow.failed)} failed table refreshes"))
+            failed_tbls = sorted({r.table_name for r in airflow.view_flow.failed})
+            flags.append((0, f"🔴 DP · L1 · View Flow · {len(airflow.view_flow.failed)} failed table refreshes: "
+                             f"{_name_list(failed_tbls)}"))
 
     # Stale and invalid table names
     if dp_biz:
